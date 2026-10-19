@@ -177,7 +177,7 @@ export async function startRun(opts: {
   let sandbox: Sandbox | undefined;
   try {
     sandbox = await Sandbox.create({
-      timeout: 20 * 60 * 1000,
+      timeout: 120 * 60 * 1000,
       resources: { vcpus: 2 },
       networkPolicy,
       ...(opts.mode === "api" && (opts.doctorKey || opts.patientKey)
