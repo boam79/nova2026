@@ -18,6 +18,8 @@ import {
 } from "../lib/constants";
 import type { CaseId, ModelId } from "../lib/constants";
 import type { ProgressEvent } from "../lib/types";
+import { RUN_STORAGE_KEY, restoreRunId, searchWithRunId } from "../lib/run-id";
+import { shouldKeepPumping } from "../lib/run-pump";
 
 type ZipState = { pathname: string; name: string; ok: boolean; issues: { level: string; message: string }[] };
 
@@ -39,7 +41,29 @@ export default function RunPage() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
+  function persistRun(id: string) {
+    try {
+      if (id) localStorage.setItem(RUN_STORAGE_KEY, id);
+      else localStorage.removeItem(RUN_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+    const next = searchWithRunId(window.location.search, id);
+    window.history.replaceState(null, "", `${window.location.pathname}${next}${window.location.hash}`);
+  }
+
   useEffect(() => {
+    try {
+      const stored = localStorage.getItem(RUN_STORAGE_KEY);
+      const id = restoreRunId(window.location.search, stored);
+      if (id) {
+        setRunId(id);
+        setStatus("queued");
+        persistRun(id);
+      }
+    } catch {
+      /* ignore */
+    }
     try {
       const raw = sessionStorage.getItem(KEY_SESSION);
       if (!raw) return;
@@ -153,12 +177,15 @@ export default function RunPage() {
       return;
     }
     setRunId(data.id);
-    setStatus("running");
+    setStatus(data.meta?.status || "queued");
     setProgress([]);
+    persistRun(data.id);
   }
 
+  const live = shouldKeepPumping(status) || (Boolean(runId) && status === "");
+
   useEffect(() => {
-    if (!runId || (status !== "running" && status !== "")) return;
+    if (!runId || !live) return;
     let stop = false;
     async function tick() {
       const res = await fetch(`/api/runs/${runId}`);
@@ -180,7 +207,7 @@ export default function RunPage() {
     return () => {
       stop = true;
     };
-  }, [runId, status]);
+  }, [runId, live]);
 
   function toggleCase(c: CaseId) {
     setCases((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
@@ -255,7 +282,7 @@ export default function RunPage() {
             <p className="hint">
               선택 {cases.length}개 · 합계 {runCount}회 · 예상 호출 {estimated}. 동시 실행은 최대 {MAX_CONCURRENT_RUNS}개입니다.
             </p>
-            <button type="button" onClick={start} disabled={!zip?.ok || !cases.length || Boolean(busy) || status === "running"}>
+            <button type="button" onClick={start} disabled={!zip?.ok || !cases.length || Boolean(busy) || shouldKeepPumping(status)}>
               실행
             </button>
           </section>
@@ -270,7 +297,7 @@ export default function RunPage() {
                   <span style={{ width: `${pct}%` }} />
                 </div>
                 <p className="hint">
-                  {status} · {mode === "api" ? "실제 모델" : "재연"}
+                  {status === "queued" ? "대기(서버에서 시작)" : status} · {mode === "api" ? "실제 모델" : "재연"}
                   {openCase ? ` · ${openCase} 진행 중` : ""} · 턴 {progress.at(-1)?.turn || 0} / 약 {maxTurn}
                 </p>
                 <button
@@ -279,7 +306,7 @@ export default function RunPage() {
                   onClick={async () => {
                     await fetch(`/api/runs/${runId}/stop`, { method: "POST" });
                   }}
-                  disabled={status !== "running"}
+                  disabled={!shouldKeepPumping(status)}
                 >
                   중지
                 </button>

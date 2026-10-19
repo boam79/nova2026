@@ -27,6 +27,10 @@ export type RunMeta = {
   callLimit: number;
   status: RunStatus;
   sandboxId: string;
+  /** 샌드박스 생성 중. 두 번 만들지 않는다. */
+  launching?: boolean;
+  /** 서버 펌프가 마지막으로 일한 시각. 창이 없어도 이어 돌릴지 판단한다. */
+  pumpedAt?: string;
   error?: string;
   summary?: unknown;
   /** 공식 대화록을 이미 저장한 증례. 진행 중 기록으로 다시 덮지 않는다. */

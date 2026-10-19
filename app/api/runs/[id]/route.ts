@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
-import { deleteRun, loadMeta, pollRun } from "../../../../lib/sandbox-run";
+import { after, NextResponse } from "next/server";
+import { chainPump, deleteRun, loadMeta, pollRun, runPrefix } from "../../../../lib/sandbox-run";
 import { maskText } from "../../../../lib/mask";
 import { getPrivateBuffer } from "../../../../lib/blob";
-import { runPrefix } from "../../../../lib/sandbox-run";
+import { hasLiveSandbox, needsPumpKick, shouldKeepPumping } from "../../../../lib/run-pump";
 
 export const maxDuration = 60;
 export const runtime = "nodejs";
@@ -11,7 +11,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
   const meta = await loadMeta(id);
   if (!meta) return NextResponse.json({ error: "없음" }, { status: 404 });
-  if (meta.status === "running") {
+  if (needsPumpKick(meta)) {
+    after(() => chainPump(id));
+  }
+  if (shouldKeepPumping(meta.status) && hasLiveSandbox(meta.sandboxId)) {
     try {
       const polled = await pollRun(meta);
       const summaryBuf = await getPrivateBuffer(`${runPrefix(polled.meta)}summary.json`);

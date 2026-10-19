@@ -9,7 +9,8 @@ import type { CaseId } from "./constants";
 import { isSandboxStoppedError, isSandboxStoppedPayload, transcriptsFromProgress, usableProgress } from "./dialogue";
 import { runnerLaunchArgs } from "./run-mode";
 import { BusyError, parseLock, admitRun, releaseRun, liveRuns, type LockState } from "./run-lock";
-import type { ProgressEvent, RunMeta, RunMode, RunStatus } from "./types";
+import { PUMP_BUDGET_MS, PUMP_HEADER, PUMP_TICK_MS, shouldKeepPumping } from "./run-pump";
+import type { ProgressEvent, RunMeta, RunMode } from "./types";
 
 const RUNNER = join(process.cwd(), "vendor", "nova_local_runner.py");
 const DISCLAIMER = "점수가 아니라 대화록에서 센 값이다. 공식 점수로 쓰지 마세요.";
@@ -125,15 +126,15 @@ async function writeSandboxFiles(
   await sandbox.writeFiles(files.map((f) => ({ ...f, mode: 0o644 })));
 }
 
-export async function startRun(opts: {
+type RunKeys = { doctorKey: string; patientKey: string };
+
+export async function enqueueRun(opts: {
   zipPath: string;
   candidate: string;
   cases: CaseId[];
   reps: number;
   repsByCase?: Partial<Record<CaseId, number>>;
   mode: RunMode;
-  doctorKey: string;
-  patientKey: string;
   doctorModel: string;
   patientModel: string;
   callLimit: number;
@@ -166,45 +167,79 @@ export async function startRun(opts: {
     doctorModel: opts.doctorModel,
     patientModel: opts.patientModel,
     callLimit: Math.max(1, Math.min(CALL_LIMIT_DEFAULT, opts.callLimit || CALL_LIMIT_DEFAULT)),
-    status: "running",
+    status: "queued",
     sandboxId: "",
     disclaimer: DISCLAIMER,
   };
-  const secrets = [opts.doctorKey, opts.patientKey].filter((k) => k && k.length >= 8);
+  await saveMeta(meta);
+  return meta;
+}
+
+export async function launchQueuedRun(id: string, keys: RunKeys): Promise<RunMeta> {
+  const meta = await loadMeta(id);
+  if (!meta) throw new Error("없음");
+  if (!shouldKeepPumping(meta.status)) return meta;
+  if (meta.sandboxId) return meta;
+  if (meta.launching) {
+    const at = Date.parse(meta.pumpedAt || meta.createdAt);
+    if (Number.isFinite(at) && Date.now() - at < 60_000) return meta;
+    meta.launching = false;
+  }
+  if (meta.mode === "api" && !keys.doctorKey && !keys.patientKey) return meta;
+
+  const secrets = [keys.doctorKey, keys.patientKey].filter((k) => k && k.length >= 8);
+
+  meta.status = "running";
+  meta.launching = true;
+  meta.pumpedAt = new Date().toISOString();
   await saveMeta(meta, secrets);
 
-  const networkPolicy = opts.mode === "api" ? { allow: ["api.openai.com"] } : "deny-all";
+  const zipBuf = await getPrivateBuffer(meta.zipPath);
+  if (!zipBuf) {
+    meta.status = "error";
+    meta.error = "ZIP이 없습니다.";
+    await saveMeta(meta, secrets);
+    await releaseLock(id);
+    throw new Error("zip_missing");
+  }
 
+  const networkPolicy = meta.mode === "api" ? { allow: ["api.openai.com"] } : "deny-all";
   let sandbox: Sandbox | undefined;
   try {
     sandbox = await Sandbox.create({
       timeout: 120 * 60 * 1000,
       resources: { vcpus: 2 },
       networkPolicy,
-      ...(opts.mode === "api" && (opts.doctorKey || opts.patientKey)
+      ...(meta.mode === "api" && (keys.doctorKey || keys.patientKey)
         ? {
             env: {
-              ...(opts.doctorKey ? { NOVA_LOCAL_DOCTOR_KEY: opts.doctorKey } : {}),
-              ...(opts.patientKey ? { NOVA_LOCAL_PATIENT_KEY: opts.patientKey } : {}),
+              ...(keys.doctorKey ? { NOVA_LOCAL_DOCTOR_KEY: keys.doctorKey } : {}),
+              ...(keys.patientKey ? { NOVA_LOCAL_PATIENT_KEY: keys.patientKey } : {}),
             },
           }
         : {}),
     });
+    const latest = await loadMeta(id);
+    if (latest && !shouldKeepPumping(latest.status)) {
+      await sandbox.stop().catch(() => undefined);
+      return latest;
+    }
     meta.sandboxId = sandbox.sandboxId;
+    meta.launching = false;
     await saveMeta(meta, secrets);
-    await writeSandboxFiles(sandbox, zipBuf, cases as CaseId[], {
+    await writeSandboxFiles(sandbox, zipBuf, meta.cases, {
       base_url: OPENAI_BASE,
-      doctor_model: opts.doctorModel,
-      patient_model: opts.patientModel,
+      doctor_model: meta.doctorModel,
+      patient_model: meta.patientModel,
       timeout: 240,
       call_limit: meta.callLimit,
     });
     const launch = runnerLaunchArgs({
-      cases,
-      repsByCase: repsByCase as Record<string, number>,
-      doctorModel: opts.doctorModel,
-      patientModel: opts.patientModel,
-      mode: opts.mode,
+      cases: meta.cases,
+      repsByCase: (meta.repsByCase || {}) as Record<string, number>,
+      doctorModel: meta.doctorModel,
+      patientModel: meta.patientModel,
+      mode: meta.mode,
     });
     const args = launch.args;
     const env: Record<string, string> = {
@@ -212,8 +247,8 @@ export async function startRun(opts: {
       NOVA_LOCAL_PROGRESS: "/vercel/sandbox/progress.jsonl",
     };
     if (launch.passKeys) {
-      if (opts.doctorKey) env.NOVA_LOCAL_DOCTOR_KEY = opts.doctorKey;
-      if (opts.patientKey) env.NOVA_LOCAL_PATIENT_KEY = opts.patientKey;
+      if (keys.doctorKey) env.NOVA_LOCAL_DOCTOR_KEY = keys.doctorKey;
+      if (keys.patientKey) env.NOVA_LOCAL_PATIENT_KEY = keys.patientKey;
     }
     await sandbox.runCommand({
       cmd: "bash",
@@ -236,6 +271,61 @@ export async function startRun(opts: {
     if (sandbox) await sandbox.stop().catch(() => undefined);
     throw err;
   }
+}
+
+export async function startRun(opts: {
+  zipPath: string;
+  candidate: string;
+  cases: CaseId[];
+  reps: number;
+  repsByCase?: Partial<Record<CaseId, number>>;
+  mode: RunMode;
+  doctorKey: string;
+  patientKey: string;
+  doctorModel: string;
+  patientModel: string;
+  callLimit: number;
+}): Promise<RunMeta> {
+  const meta = await enqueueRun(opts);
+  return launchQueuedRun(meta.id, { doctorKey: opts.doctorKey, patientKey: opts.patientKey });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+export async function pumpUntilBudget(id: string, keys?: RunKeys, budgetMs = PUMP_BUDGET_MS): Promise<RunMeta | null> {
+  const started = Date.now();
+  let meta = await loadMeta(id);
+  while (meta && shouldKeepPumping(meta.status) && Date.now() - started < budgetMs) {
+    meta.pumpedAt = new Date().toISOString();
+    await saveMeta(meta);
+    if (!meta.sandboxId) {
+      if (meta.status === "queued" && (keys || meta.mode !== "api")) {
+        meta = await launchQueuedRun(id, keys || { doctorKey: "", patientKey: "" });
+      } else {
+        await sleep(PUMP_TICK_MS);
+        meta = await loadMeta(id);
+      }
+      continue;
+    }
+    const polled = await pollRun(meta);
+    meta = polled.meta;
+    if (!shouldKeepPumping(meta.status)) return meta;
+    await sleep(PUMP_TICK_MS);
+    meta = (await loadMeta(id)) || meta;
+  }
+  return meta;
+}
+
+export async function chainPump(id: string): Promise<void> {
+  const secret = process.env.AUTH_SECRET || "";
+  const host = process.env.VERCEL_URL || "";
+  if (!secret || !host) return;
+  await fetch(`https://${host}/api/runs/${encodeURIComponent(id)}/continue`, {
+    method: "POST",
+    headers: { [PUMP_HEADER]: secret },
+  }).catch(() => undefined);
 }
 
 async function readSandboxText(sandbox: Sandbox, path: string): Promise<string> {
@@ -492,6 +582,13 @@ async function harvest(sandbox: Sandbox, meta: RunMeta, secrets: string[]): Prom
 }
 
 export async function stopRun(meta: RunMeta): Promise<RunMeta> {
+  if (!meta.sandboxId) {
+    meta.status = "stopped";
+    meta.error = "중지했습니다. 그때까지 나온 대화는 기록에 저장했습니다.";
+    await saveMeta(meta);
+    await releaseLock(meta.id);
+    return meta;
+  }
   try {
     const sandbox = await Sandbox.get({ sandboxId: meta.sandboxId });
     const progressText = maskText(await readSandboxText(sandbox, "/vercel/sandbox/progress.jsonl"), []);

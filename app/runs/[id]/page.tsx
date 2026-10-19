@@ -27,9 +27,19 @@ export default function ResultPage() {
   } | null>(null);
 
   useEffect(() => {
-    fetch(`/api/runs/${id}`)
-      .then((r) => r.json())
-      .then(setData);
+    let cancelled = false;
+    async function tick() {
+      const res = await fetch(`/api/runs/${id}`);
+      const json = await res.json();
+      if (cancelled) return;
+      setData(json);
+      const st = json.meta?.status;
+      if (st === "queued" || st === "running") setTimeout(tick, 1200);
+    }
+    tick();
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   const rows = data?.summary?.rows || [];
@@ -41,7 +51,11 @@ export default function ResultPage() {
       <h1>결과 {data?.meta?.candidate || ""}</h1>
       <Disclaimer />
       <p className="hint">
-        요청 모드: {data?.meta?.mode === "api" ? "실제 모델" : data?.meta?.mode === "replay" ? "재연" : "—"}. 대화록의 의사/환자 칸이 replay·bank이면 모델 왕복이 없습니다.
+        요청 모드: {data?.meta?.mode === "api" ? "실제 모델" : data?.meta?.mode === "replay" ? "재연" : "—"}
+        {data?.meta?.status === "queued" || data?.meta?.status === "running"
+          ? " · 실행 중(창을 닫아도 서버에서 이어 갑니다)."
+          : ""}
+        . 대화록의 의사/환자 칸이 replay·bank이면 모델 왕복이 없습니다.
       </p>
       {data?.meta?.error ? <p className="bad">{data.meta.error}</p> : null}
       <table>

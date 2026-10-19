@@ -1,13 +1,14 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { CASES, CALL_LIMIT_DEFAULT, DEFAULT_DOCTOR_MODEL, DEFAULT_PATIENT_MODEL, MAX_CONCURRENT_RUNS, clampRep } from "../../../lib/constants";
-import { listMetas, lockSnapshot, startRun } from "../../../lib/sandbox-run";
+import { chainPump, enqueueRun, launchQueuedRun, listMetas, lockSnapshot, pumpUntilBudget } from "../../../lib/sandbox-run";
 import { resolveRunMode } from "../../../lib/run-mode";
 import { BusyError } from "../../../lib/run-lock";
 import { maskText } from "../../../lib/mask";
+import { shouldKeepPumping, shouldStopOnClientDisconnect } from "../../../lib/run-pump";
 import type { CaseId } from "../../../lib/constants";
 import type { RunMode } from "../../../lib/types";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 export const runtime = "nodejs";
 
 export async function GET() {
@@ -41,18 +42,34 @@ export async function POST(req: Request) {
     if (body.mode === "api" && !apiKey) {
       return NextResponse.json({ error: "실제 모델 모드에는 키가 필요합니다." }, { status: 400 });
     }
-    const meta = await startRun({
+    const meta = await enqueueRun({
       zipPath: body.zipPath,
       candidate: body.candidate || "submission",
       cases: selected,
       reps: Math.max(...Object.values(repsByCase)),
       repsByCase,
       mode,
-      doctorKey: mode === "api" ? apiKey : "",
-      patientKey: mode === "api" ? apiKey : "",
       doctorModel: body.doctorModel || DEFAULT_DOCTOR_MODEL,
       patientModel: body.patientModel || DEFAULT_PATIENT_MODEL,
       callLimit: body.callLimit || CALL_LIMIT_DEFAULT,
+    });
+    const keys = {
+      doctorKey: mode === "api" ? apiKey : "",
+      patientKey: mode === "api" ? apiKey : "",
+    };
+    if (shouldStopOnClientDisconnect() && req.signal.aborted) {
+      return NextResponse.json({ id: meta.id, meta });
+    }
+    after(async () => {
+      try {
+        await launchQueuedRun(meta.id, keys);
+        const latest = await pumpUntilBudget(meta.id, keys);
+        if (latest && shouldKeepPumping(latest.status) && (latest.sandboxId || keys.doctorKey)) {
+          await chainPump(meta.id);
+        }
+      } catch {
+        /* launchQueuedRun already records error on meta */
+      }
     });
     return NextResponse.json({ id: meta.id, meta });
   } catch (err) {

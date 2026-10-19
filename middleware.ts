@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { GATE_COOKIE } from "./lib/constants";
 import { verifyGateToken } from "./lib/auth";
+import { PUMP_HEADER, isContinuePath, verifyPumpSecret } from "./lib/run-pump";
 
 const PUBLIC = new Set(["/login", "/api/login", "/robots.txt"]);
 
@@ -10,6 +11,9 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
   const secret = process.env.AUTH_SECRET || "";
+  if (isContinuePath(pathname) && verifyPumpSecret(req.headers.get(PUMP_HEADER), secret)) {
+    return NextResponse.next();
+  }
   const token = req.cookies.get(GATE_COOKIE)?.value;
   const ok = await verifyGateToken(token, secret);
   if (ok) return NextResponse.next();
