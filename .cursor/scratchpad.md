@@ -41,6 +41,7 @@
 
 ## Executor's Feedback or Assistance Requests
 
+- 2026-10-19: 실행 화면에 OpenAI 총잔액 표시. 넣은 키로 `credit_grants`를 읽고, 안 되면 이번 달 `organization/costs` 사용액만 보여 준다. 키는 서버에 저장하지 않는다.
 - 2026-10-19: 새로고침·창 닫아도 실행이 끝나게. POST는 queued 메타를 바로 돌려 `after()`에서 샌드박스를 만들고 펌프한다. `/api/runs/[id]/continue`가 함수 시간 전에 다음 조각을 잇는다. 화면은 `localStorage`·`/?run=`으로 다시 붙는다. 중지는 명시 버튼만. 키는 Blob에 저장하지 않는다.
 - 모드: Executor. 사용자 확인: M1만 진행. GitHub 원격 생성하지 않음(비공개로 만들 필요 없음).
 - M1 완료. ZIP 끌어놓기는 배포 HTTPS에서 검증 통과. M2는 시작하지 않음.

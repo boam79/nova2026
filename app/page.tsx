@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { upload } from "@vercel/blob/client";
 import { BlobUsagePanel } from "../components/BlobUsagePanel";
+import { OpenAIBalancePanel } from "../components/OpenAIBalancePanel";
 import { Disclaimer, Nav } from "../components/Nav";
 import {
   CASES,
@@ -223,6 +224,7 @@ export default function RunPage() {
       </header>
       <Disclaimer />
       <BlobUsagePanel />
+      <OpenAIBalancePanel apiKey={apiKey} />
       {busy ? <p className="hint">{busy}</p> : null}
       {error ? <p className="bad">{error}</p> : null}
       {(status === "error" || status === "stopped") && runId ? (
