@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Disclaimer, Nav } from "../../components/Nav";
+import { isActiveRunStatus } from "../../lib/durable-run";
 import type { RunMeta } from "../../lib/types";
 
 export default function RunsPage() {
@@ -15,7 +16,21 @@ export default function RunsPage() {
   }
 
   useEffect(() => {
-    load();
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function tick() {
+      const res = await fetch("/api/runs");
+      const data = await res.json();
+      if (stop) return;
+      const list = (data.runs || []) as RunMeta[];
+      setRuns(list);
+      if (list.some((r) => isActiveRunStatus(r.status))) timer = setTimeout(tick, 3000);
+    }
+    tick();
+    return () => {
+      stop = true;
+      clearTimeout(timer);
+    };
   }, []);
 
   async function remove(id: string) {

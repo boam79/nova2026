@@ -1,4 +1,4 @@
-import { GATE_COOKIE } from "./constants";
+import { GATE_COOKIE } from "./constants.ts";
 
 function b64url(bytes: ArrayBuffer | Uint8Array): string {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -53,6 +53,16 @@ export function timingSafeEqual(a: string, b: string): boolean {
   let diff = 0;
   for (let i = 0; i < aa.length; i++) diff |= aa[i] ^ bb[i];
   return diff === 0;
+}
+
+export async function signPayload(secret: string, payload: string): Promise<string> {
+  return hmac(secret, payload);
+}
+
+export async function verifySignedPayload(secret: string, payload: string, sig: string | undefined): Promise<boolean> {
+  if (!secret || !sig) return false;
+  const expect = await hmac(secret, payload);
+  return timingSafeEqual(expect, sig);
 }
 
 export { GATE_COOKIE, fromB64url };

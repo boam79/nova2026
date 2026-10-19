@@ -9,7 +9,8 @@ import type { CaseId } from "./constants";
 import { isSandboxStoppedError, isSandboxStoppedPayload, transcriptsFromProgress, usableProgress } from "./dialogue";
 import { runnerLaunchArgs } from "./run-mode";
 import { BusyError, parseLock, admitRun, releaseRun, liveRuns, type LockState } from "./run-lock";
-import type { ProgressEvent, RunMeta, RunMode, RunStatus } from "./types";
+import { isActiveRunStatus, planPumpTick, PUMP_INTERVAL_MS, QUEUE_STALE_MS } from "./durable-run";
+import type { ProgressEvent, RunMeta, RunMode } from "./types";
 
 const RUNNER = join(process.cwd(), "vendor", "nova_local_runner.py");
 const DISCLAIMER = "점수가 아니라 대화록에서 센 값이다. 공식 점수로 쓰지 마세요.";
@@ -26,13 +27,21 @@ export function runPrefix(meta: Pick<RunMeta, "createdAt" | "id">): string {
   return `runs/${kstDate(new Date(meta.createdAt))}/${meta.id}/`;
 }
 
+export function idMetaPath(id: string): string {
+  return `runs/id/${id}.json`;
+}
+
 export async function saveMeta(meta: RunMeta, secrets: string[] = []): Promise<void> {
   const clean = scrubValue({ ...meta, disclaimer: DISCLAIMER }, secrets);
   assertNoSecrets(clean, secrets);
-  await putPrivate(metaPath(meta), JSON.stringify(clean, null, 2), "application/json");
+  const json = JSON.stringify(clean, null, 2);
+  await putPrivate(metaPath(meta), json, "application/json");
+  await putPrivate(idMetaPath(meta.id), json, "application/json");
 }
 
 export async function loadMeta(id: string): Promise<RunMeta | null> {
+  const indexed = await getPrivateBuffer(idMetaPath(id));
+  if (indexed) return JSON.parse(indexed.toString("utf8")) as RunMeta;
   const blobs = await (await import("./blob")).listPrefix("runs/");
   const hit = blobs.find((b) => b.pathname.endsWith(`/${id}/meta.json`));
   if (!hit) return null;
@@ -125,7 +134,7 @@ async function writeSandboxFiles(
   await sandbox.writeFiles(files.map((f) => ({ ...f, mode: 0o644 })));
 }
 
-export async function startRun(opts: {
+export type StartRunOpts = {
   zipPath: string;
   candidate: string;
   cases: CaseId[];
@@ -137,7 +146,9 @@ export async function startRun(opts: {
   doctorModel: string;
   patientModel: string;
   callLimit: number;
-}): Promise<RunMeta> {
+};
+
+export async function queueRun(opts: StartRunOpts): Promise<RunMeta> {
   const id = crypto.randomUUID();
   const locked = await acquireLock(id);
   if (!locked.ok) throw new BusyError(locked.inFlight, locked.max);
@@ -166,13 +177,35 @@ export async function startRun(opts: {
     doctorModel: opts.doctorModel,
     patientModel: opts.patientModel,
     callLimit: Math.max(1, Math.min(CALL_LIMIT_DEFAULT, opts.callLimit || CALL_LIMIT_DEFAULT)),
-    status: "running",
+    status: "queued",
     sandboxId: "",
     disclaimer: DISCLAIMER,
   };
-  const secrets = [opts.doctorKey, opts.patientKey].filter((k) => k && k.length >= 8);
-  await saveMeta(meta, secrets);
+  await saveMeta(meta, [opts.doctorKey, opts.patientKey].filter((k) => k && k.length >= 8));
+  return meta;
+}
 
+export async function launchQueuedRun(queued: RunMeta, opts: StartRunOpts): Promise<RunMeta> {
+  const meta = (await loadMeta(queued.id)) || queued;
+  if (!isActiveRunStatus(meta.status)) return meta;
+  if (meta.sandboxId) {
+    if (meta.status === "queued") {
+      meta.status = "running";
+      await saveMeta(meta);
+    }
+    return meta;
+  }
+  const secrets = [opts.doctorKey, opts.patientKey].filter((k) => k && k.length >= 8);
+  const zipBuf = await getPrivateBuffer(opts.zipPath || meta.zipPath);
+  if (!zipBuf) {
+    meta.status = "error";
+    meta.error = "ZIP이 없습니다.";
+    await saveMeta(meta, secrets);
+    await releaseLock(meta.id);
+    throw new Error("zip_missing");
+  }
+  const cases = meta.cases;
+  const repsByCase = (meta.repsByCase || {}) as Record<string, number>;
   const networkPolicy = opts.mode === "api" ? { allow: ["api.openai.com"] } : "deny-all";
 
   let sandbox: Sandbox | undefined;
@@ -191,8 +224,9 @@ export async function startRun(opts: {
         : {}),
     });
     meta.sandboxId = sandbox.sandboxId;
+    meta.status = "running";
     await saveMeta(meta, secrets);
-    await writeSandboxFiles(sandbox, zipBuf, cases as CaseId[], {
+    await writeSandboxFiles(sandbox, zipBuf, cases, {
       base_url: OPENAI_BASE,
       doctor_model: opts.doctorModel,
       patient_model: opts.patientModel,
@@ -201,7 +235,7 @@ export async function startRun(opts: {
     });
     const launch = runnerLaunchArgs({
       cases,
-      repsByCase: repsByCase as Record<string, number>,
+      repsByCase,
       doctorModel: opts.doctorModel,
       patientModel: opts.patientModel,
       mode: opts.mode,
@@ -215,7 +249,7 @@ export async function startRun(opts: {
       if (opts.doctorKey) env.NOVA_LOCAL_DOCTOR_KEY = opts.doctorKey;
       if (opts.patientKey) env.NOVA_LOCAL_PATIENT_KEY = opts.patientKey;
     }
-    await sandbox.runCommand({
+    const cmd = await sandbox.runCommand({
       cmd: "bash",
       args: [
         "-c",
@@ -227,14 +261,66 @@ export async function startRun(opts: {
       cwd: "/vercel/sandbox",
       env,
     });
+    const cmdId = cmd && typeof cmd === "object" && "cmdId" in cmd ? String((cmd as { cmdId?: string }).cmdId || "") : "";
+    if (cmdId) {
+      meta.commandId = cmdId;
+      await saveMeta(meta, secrets);
+    }
     return meta;
   } catch (err) {
     meta.status = "error";
     meta.error = maskText(String((err as Error).message || err), secrets);
     await saveMeta(meta, secrets);
-    await releaseLock(id);
+    await releaseLock(meta.id);
     if (sandbox) await sandbox.stop().catch(() => undefined);
     throw err;
+  }
+}
+
+export async function startRun(opts: StartRunOpts): Promise<RunMeta> {
+  const meta = await queueRun(opts);
+  return launchQueuedRun(meta, opts);
+}
+
+async function failStaleQueue(meta: RunMeta): Promise<RunMeta> {
+  if (meta.status !== "queued" || meta.sandboxId) return meta;
+  const age = Date.now() - Date.parse(meta.createdAt);
+  if (!Number.isFinite(age) || age <= QUEUE_STALE_MS) return meta;
+  meta.status = "error";
+  meta.error = "실행을 시작하지 못했습니다. 다시 실행해 주세요.";
+  await saveMeta(meta);
+  await releaseLock(meta.id);
+  return meta;
+}
+
+export async function pumpRun(id: string, enqueue: (runId: string) => Promise<void>): Promise<void> {
+  const started = Date.now();
+  while (true) {
+    let meta = await loadMeta(id);
+    if (meta) meta = await failStaleQueue(meta);
+    const action = planPumpTick({
+      status: meta?.status,
+      hasSandbox: Boolean(meta?.sandboxId),
+      sliceElapsedMs: Date.now() - started,
+    });
+    if (action === "finish") return;
+    if (action === "reenqueue") {
+      try {
+        await enqueue(id);
+      } catch {
+        await new Promise((r) => setTimeout(r, 2000));
+        await enqueue(id).catch(() => undefined);
+      }
+      return;
+    }
+    if (action === "poll" && meta) {
+      try {
+        await pollRun(meta);
+      } catch {
+        /* next tick or reenqueue */
+      }
+    }
+    await new Promise((r) => setTimeout(r, PUMP_INTERVAL_MS));
   }
 }
 
@@ -248,7 +334,7 @@ async function readSandboxText(sandbox: Sandbox, path: string): Promise<string> 
   return text;
 }
 
-async function loadSavedProgress(meta: RunMeta): Promise<ProgressEvent[]> {
+export async function readRunProgress(meta: RunMeta): Promise<ProgressEvent[]> {
   const buf = await getPrivateBuffer(`${runPrefix(meta)}progress.jsonl`);
   if (!buf) return [];
   return usableProgress(parseProgress(buf.toString("utf8")));
@@ -353,7 +439,7 @@ function closedLabels(progress: ProgressEvent[]): string[] {
 }
 
 async function sealInterrupted(meta: RunMeta, secrets: string[]): Promise<{ meta: RunMeta; progress: ProgressEvent[]; log: string }> {
-  const progress = await loadSavedProgress(meta);
+  const progress = await readRunProgress(meta);
   await persistDialogue(meta, progress, secrets);
   const spoke = progress.some((event) => event.kind === "say" || event.kind === "exam");
   meta.status = "error";
@@ -402,7 +488,7 @@ export async function pollRun(meta: RunMeta, secrets: string[] = []): Promise<{
   }
   const maskedProgress = maskText(progressText, secrets);
   const progress = usableProgress(parseProgress(maskedProgress));
-  if (progressText) {
+  if (progressText && progress.length !== (meta.progressLines || 0)) {
     await putPrivate(`${runPrefix(meta)}progress.jsonl`, maskedProgress, "application/x-ndjson");
   }
   await persistDialogue(meta, progress, secrets);
@@ -442,6 +528,20 @@ export async function pollRun(meta: RunMeta, secrets: string[] = []): Promise<{
     }
   }
   return { meta, progress, log };
+}
+
+export async function syncRun(
+  meta: RunMeta,
+  secrets: string[] = [],
+): Promise<{ meta: RunMeta; progress: ProgressEvent[]; log: string }> {
+  const current = await failStaleQueue(meta);
+  if (current.status === "queued" && !current.sandboxId) {
+    return { meta: current, progress: await readRunProgress(current), log: "" };
+  }
+  if (current.status === "running" || (current.status === "queued" && current.sandboxId)) {
+    return pollRun(current, secrets);
+  }
+  return { meta: current, progress: await readRunProgress(current), log: "" };
 }
 
 async function harvest(sandbox: Sandbox, meta: RunMeta, secrets: string[]): Promise<void> {
@@ -503,7 +603,7 @@ export async function stopRun(meta: RunMeta): Promise<RunMeta> {
     await copyOfficialTranscripts(sandbox, meta, [], closedLabels(progress));
     await sandbox.stop();
   } catch {
-    const progress = await loadSavedProgress(meta);
+    const progress = await readRunProgress(meta);
     await persistDialogue(meta, progress, []);
   }
   meta.status = "stopped";
@@ -521,6 +621,7 @@ export async function deleteRun(meta: RunMeta): Promise<void> {
     /* ignore */
   }
   await deletePrefix(runPrefix(meta));
+  await deletePrefix(idMetaPath(meta.id));
   await releaseLock(meta.id);
 }
 

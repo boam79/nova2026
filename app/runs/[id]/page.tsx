@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Disclaimer, Nav } from "../../../components/Nav";
+import { isActiveRunStatus } from "../../../lib/durable-run";
 
 type Row = {
   case: string;
@@ -27,21 +28,35 @@ export default function ResultPage() {
   } | null>(null);
 
   useEffect(() => {
-    fetch(`/api/runs/${id}`)
-      .then((r) => r.json())
-      .then(setData);
+    let stop = false;
+    async function tick() {
+      const res = await fetch(`/api/runs/${id}`);
+      const json = await res.json();
+      if (stop) return;
+      setData(json);
+      if (isActiveRunStatus(json.meta?.status)) setTimeout(tick, 1200);
+    }
+    tick();
+    return () => {
+      stop = true;
+    };
   }, [id]);
 
   const rows = data?.summary?.rows || [];
   const cases = rows.map((r) => r.case).filter(Boolean);
+  const live = isActiveRunStatus(data?.meta?.status);
 
   return (
     <main>
       <Nav />
-      <h1>결과 {data?.meta?.candidate || ""}</h1>
+      <h1>
+        결과 {data?.meta?.candidate || ""}
+        {live ? " (진행 중)" : ""}
+      </h1>
       <Disclaimer />
       <p className="hint">
         요청 모드: {data?.meta?.mode === "api" ? "실제 모델" : data?.meta?.mode === "replay" ? "재연" : "—"}. 대화록의 의사/환자 칸이 replay·bank이면 모델 왕복이 없습니다.
+        {live ? " 새로고침해도 실행은 서버에서 이어지고, 이 화면이 다시 붙습니다." : ""}
       </p>
       {data?.meta?.error ? <p className="bad">{data.meta.error}</p> : null}
       <table>

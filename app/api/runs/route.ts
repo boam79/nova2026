@@ -1,6 +1,8 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { CASES, CALL_LIMIT_DEFAULT, DEFAULT_DOCTOR_MODEL, DEFAULT_PATIENT_MODEL, MAX_CONCURRENT_RUNS, clampRep } from "../../../lib/constants";
-import { listMetas, lockSnapshot, startRun } from "../../../lib/sandbox-run";
+import { launchQueuedRun, listMetas, lockSnapshot, pumpRun, queueRun } from "../../../lib/sandbox-run";
+import { queueRunAndContinue } from "../../../lib/durable-run";
+import { enqueuePump } from "../../../lib/run-pump";
 import { resolveRunMode } from "../../../lib/run-mode";
 import { BusyError } from "../../../lib/run-lock";
 import { maskText } from "../../../lib/mask";
@@ -41,7 +43,7 @@ export async function POST(req: Request) {
     if (body.mode === "api" && !apiKey) {
       return NextResponse.json({ error: "실제 모델 모드에는 키가 필요합니다." }, { status: 400 });
     }
-    const meta = await startRun({
+    const opts = {
       zipPath: body.zipPath,
       candidate: body.candidate || "submission",
       cases: selected,
@@ -53,6 +55,22 @@ export async function POST(req: Request) {
       doctorModel: body.doctorModel || DEFAULT_DOCTOR_MODEL,
       patientModel: body.patientModel || DEFAULT_PATIENT_MODEL,
       callLimit: body.callLimit || CALL_LIMIT_DEFAULT,
+    };
+    const origin = new URL(req.url).origin;
+    const meta = await queueRunAndContinue({
+      signal: req.signal,
+      queue: () => queueRun(opts),
+      scheduleAfter: (work) => {
+        after(async () => {
+          try {
+            await work();
+          } catch {
+            /* launch/pump persist errors on the run meta */
+          }
+        });
+      },
+      launch: (queued) => launchQueuedRun(queued, opts),
+      pump: (queued) => pumpRun(queued.id, (id) => enqueuePump(id, origin)),
     });
     return NextResponse.json({ id: meta.id, meta });
   } catch (err) {
