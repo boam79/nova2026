@@ -6,6 +6,7 @@ import { deletePrefix, getPrivateBuffer, putPrivate } from "./blob";
 import { assertNoSecrets, maskText, scrubValue } from "./mask";
 import { summarizeTranscript, transcriptToText, type Transcript, type Side } from "./summary";
 import type { CaseId } from "./constants";
+import { isSandboxStoppedError, isSandboxStoppedPayload, transcriptsFromProgress, usableProgress } from "./dialogue";
 import { runnerLaunchArgs } from "./run-mode";
 import { BusyError, parseLock, admitRun, releaseRun, liveRuns, type LockState } from "./run-lock";
 import type { ProgressEvent, RunMeta, RunMode, RunStatus } from "./types";
@@ -239,7 +240,129 @@ export async function startRun(opts: {
 
 async function readSandboxText(sandbox: Sandbox, path: string): Promise<string> {
   const buf = await sandbox.readFileToBuffer({ path });
-  return buf ? buf.toString("utf8") : "";
+  if (!buf) return "";
+  const text = buf.toString("utf8");
+  if (isSandboxStoppedPayload(text)) {
+    throw new Error(text);
+  }
+  return text;
+}
+
+async function loadSavedProgress(meta: RunMeta): Promise<ProgressEvent[]> {
+  const buf = await getPrivateBuffer(`${runPrefix(meta)}progress.jsonl`);
+  if (!buf) return [];
+  return usableProgress(parseProgress(buf.toString("utf8")));
+}
+
+async function storeTranscript(
+  meta: RunMeta,
+  label: string,
+  doc: Transcript,
+  secrets: string[],
+  side: Side,
+  partial: boolean,
+): Promise<void> {
+  const prefix = runPrefix(meta);
+  const clean = scrubValue(doc, secrets);
+  const jsonOut = JSON.stringify(clean, null, 2);
+  const textOut = maskText(transcriptToText(doc), secrets);
+  assertNoSecrets(jsonOut, secrets);
+  assertNoSecrets(textOut, secrets);
+  await putPrivate(`${prefix}transcripts/${label}.json`, jsonOut, "application/json");
+  await putPrivate(`${prefix}transcripts/${label}.txt`, textOut, "text/plain; charset=utf-8");
+  const row = { ...summarizeTranscript(label, doc, side), partial };
+  const prev = (meta.summary as { rows?: { case: string }[] } | undefined)?.rows || [];
+  const summary = {
+    disclaimer: DISCLAIMER,
+    candidate: meta.candidate,
+    cases: meta.cases,
+    rows: [...prev.filter((item) => item.case !== label), row],
+  };
+  assertNoSecrets(summary, secrets);
+  await putPrivate(`${prefix}summary.json`, JSON.stringify(summary, null, 2), "application/json");
+  meta.summary = summary;
+}
+
+async function persistDialogue(meta: RunMeta, progress: ProgressEvent[], secrets: string[]): Promise<void> {
+  if (progress.length === meta.progressLines) return;
+  const archived = new Set(meta.archived || []);
+  for (const item of transcriptsFromProgress(progress)) {
+    if (archived.has(item.label) || !item.doc.turns?.length) continue;
+    await storeTranscript(meta, item.label, item.doc, secrets, {}, !item.closed);
+  }
+  meta.progressLines = progress.length;
+  await saveMeta(meta, secrets);
+}
+
+async function copyOfficialTranscripts(sandbox: Sandbox, meta: RunMeta, secrets: string[], labels: string[]): Promise<void> {
+  const wanted = new Set(
+    labels.filter((label) => label && !(meta.archived || []).includes(label) && !(meta.officialTried || []).includes(label)),
+  );
+  if (!wanted.size) return;
+  let listing = "";
+  try {
+    const list = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-c", "find /vercel/sandbox/runs -type f -name '*.json' | sort"],
+    });
+    listing = await list.stdout();
+  } catch (err) {
+    if (isSandboxStoppedError(err)) return;
+    throw err;
+  }
+  const saved: string[] = [];
+  for (const path of listing.split("\n")) {
+    if (!path.includes("/transcripts/") || !path.endsWith(".json") || path.endsWith(".local.json")) continue;
+    const label = path.split("/").pop()?.replace(/\.json$/, "") || "";
+    if (!wanted.has(label)) continue;
+    const buf = await sandbox.readFileToBuffer({ path }).catch((err: unknown) => {
+      if (isSandboxStoppedError(err)) return null;
+      throw err;
+    });
+    if (!buf) continue;
+    const text = buf.toString("utf8");
+    if (isSandboxStoppedPayload(text)) continue;
+    let doc: Transcript;
+    try {
+      doc = JSON.parse(maskText(text, secrets)) as Transcript;
+    } catch {
+      continue;
+    }
+    let side: Side = {};
+    const sideBuf = await sandbox.readFileToBuffer({ path: path.replace(/\.json$/, ".local.json") }).catch(() => null);
+    if (sideBuf) {
+      const sideText = sideBuf.toString("utf8");
+      if (!isSandboxStoppedPayload(sideText)) {
+        try {
+          side = JSON.parse(maskText(sideText, secrets)) as Side;
+        } catch {
+          side = {};
+        }
+      }
+    }
+    await storeTranscript(meta, label, doc, secrets, side, false);
+    saved.push(label);
+  }
+  meta.officialTried = [...new Set([...(meta.officialTried || []), ...labels])];
+  if (saved.length) meta.archived = [...new Set([...(meta.archived || []), ...saved])];
+  await saveMeta(meta, secrets);
+}
+
+function closedLabels(progress: ProgressEvent[]): string[] {
+  return progress.filter((event) => event.kind === "case_end" && event.case).map((event) => event.case || "");
+}
+
+async function sealInterrupted(meta: RunMeta, secrets: string[]): Promise<{ meta: RunMeta; progress: ProgressEvent[]; log: string }> {
+  const progress = await loadSavedProgress(meta);
+  await persistDialogue(meta, progress, secrets);
+  const spoke = progress.some((event) => event.kind === "say" || event.kind === "exam");
+  meta.status = "error";
+  meta.error = spoke
+    ? "샌드박스가 끊겼습니다. 그때까지 나온 대화는 기록에 저장했습니다."
+    : "샌드박스가 끊겼습니다. 저장된 대화가 없습니다.";
+  await saveMeta(meta, secrets);
+  await releaseLock(meta.id);
+  return { meta, progress, log: "" };
 }
 
 export function parseProgress(text: string): ProgressEvent[] {
@@ -263,13 +386,40 @@ export async function pollRun(meta: RunMeta, secrets: string[] = []): Promise<{
   if (!meta.sandboxId) {
     return { meta, progress: [], log: "sandbox 없음" };
   }
-  const sandbox = await Sandbox.get({ sandboxId: meta.sandboxId });
-  const progressText = await readSandboxText(sandbox, "/vercel/sandbox/progress.jsonl");
-  const log = maskText(await readSandboxText(sandbox, "/vercel/sandbox/run_stdout.txt"), secrets);
-  const exitRaw = (await readSandboxText(sandbox, "/vercel/sandbox/exit_code.txt")).trim();
-  const progress = parseProgress(maskText(progressText, secrets));
+  let sandbox: Sandbox;
+  try {
+    sandbox = await Sandbox.get({ sandboxId: meta.sandboxId });
+  } catch (err) {
+    if (isSandboxStoppedError(err)) return sealInterrupted(meta, secrets);
+    throw err;
+  }
+  let progressText = "";
+  try {
+    progressText = await readSandboxText(sandbox, "/vercel/sandbox/progress.jsonl");
+  } catch (err) {
+    if (isSandboxStoppedError(err)) return sealInterrupted(meta, secrets);
+    throw err;
+  }
+  const maskedProgress = maskText(progressText, secrets);
+  const progress = usableProgress(parseProgress(maskedProgress));
   if (progressText) {
-    await putPrivate(`${runPrefix(meta)}progress.jsonl`, maskText(progressText, secrets), "application/x-ndjson");
+    await putPrivate(`${runPrefix(meta)}progress.jsonl`, maskedProgress, "application/x-ndjson");
+  }
+  await persistDialogue(meta, progress, secrets);
+  try {
+    await copyOfficialTranscripts(sandbox, meta, secrets, closedLabels(progress));
+  } catch (err) {
+    if (isSandboxStoppedError(err)) return sealInterrupted(meta, secrets);
+    throw err;
+  }
+  let log = "";
+  let exitRaw = "";
+  try {
+    log = maskText(await readSandboxText(sandbox, "/vercel/sandbox/run_stdout.txt"), secrets);
+    exitRaw = (await readSandboxText(sandbox, "/vercel/sandbox/exit_code.txt")).trim();
+  } catch (err) {
+    if (isSandboxStoppedError(err)) return sealInterrupted(meta, secrets);
+    throw err;
   }
   if (exitRaw !== "") {
     const code = Number(exitRaw);
@@ -283,6 +433,7 @@ export async function pollRun(meta: RunMeta, secrets: string[] = []): Promise<{
         await sandbox.stop().catch(() => undefined);
       }
     } catch (err) {
+      if (isSandboxStoppedError(err)) return sealInterrupted(meta, secrets);
       meta.status = "error";
       meta.error = maskText(String((err as Error).message || err), secrets);
       await saveMeta(meta, secrets);
@@ -343,11 +494,20 @@ async function harvest(sandbox: Sandbox, meta: RunMeta, secrets: string[]): Prom
 export async function stopRun(meta: RunMeta): Promise<RunMeta> {
   try {
     const sandbox = await Sandbox.get({ sandboxId: meta.sandboxId });
+    const progressText = maskText(await readSandboxText(sandbox, "/vercel/sandbox/progress.jsonl"), []);
+    const progress = usableProgress(parseProgress(progressText));
+    if (progressText) {
+      await putPrivate(`${runPrefix(meta)}progress.jsonl`, progressText, "application/x-ndjson");
+    }
+    await persistDialogue(meta, progress, []);
+    await copyOfficialTranscripts(sandbox, meta, [], closedLabels(progress));
     await sandbox.stop();
   } catch {
-    /* already gone */
+    const progress = await loadSavedProgress(meta);
+    await persistDialogue(meta, progress, []);
   }
   meta.status = "stopped";
+  meta.error = "중지했습니다. 그때까지 나온 대화는 기록에 저장했습니다.";
   await saveMeta(meta);
   await releaseLock(meta.id);
   return meta;

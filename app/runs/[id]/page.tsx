@@ -6,6 +6,7 @@ import { Disclaimer, Nav } from "../../../components/Nav";
 
 type Row = {
   case: string;
+  partial?: boolean;
   turns?: number;
   history?: number;
   exams?: number;
@@ -22,7 +23,7 @@ export default function ResultPage() {
   const [data, setData] = useState<{
     meta?: { candidate: string; status: string; error?: string; cases: string[]; mode?: string };
     summary?: { rows?: Row[] };
-    progress?: { kind: string; turn: number; doctor: string; patient: string }[];
+    progress?: { kind: string; turn: number; doctor: string; patient: string; case?: string; ok?: boolean }[];
   } | null>(null);
 
   useEffect(() => {
@@ -61,7 +62,10 @@ export default function ResultPage() {
         <tbody>
           {rows.map((r) => (
             <tr key={r.case}>
-              <td>{r.case}</td>
+              <td>
+                {r.case}
+                {r.partial ? " (끊김)" : ""}
+              </td>
               <td>{r.turns}</td>
               <td>{r.history}</td>
               <td>{r.exams}</td>
@@ -92,13 +96,23 @@ export default function ResultPage() {
       ))}
       <h2>대화</h2>
       <div className="turns">
-        {(data?.progress || []).map((p, i) => (
-          <p key={i}>
-            [{p.kind} {p.turn}] 의사: {p.doctor}
-            <br />
-            환자: {p.patient}
-          </p>
-        ))}
+        {(data?.progress || []).map((p, i) =>
+          p.kind === "case_start" ? (
+            <p key={i} className="case-mark">
+              {p.case} 시작
+            </p>
+          ) : p.kind === "case_end" ? (
+            <p key={i} className={p.ok === false ? "case-mark bad" : "case-mark end"}>
+              {p.case} 끝
+            </p>
+          ) : p.kind === "say" || p.kind === "exam" ? (
+            <p key={i}>
+              [{p.kind} {p.turn}] 의사: {p.doctor}
+              <br />
+              환자: {p.patient}
+            </p>
+          ) : null,
+        )}
       </div>
     </main>
   );

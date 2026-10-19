@@ -198,6 +198,11 @@ export default function RunPage() {
       <BlobUsagePanel />
       {busy ? <p className="hint">{busy}</p> : null}
       {error ? <p className="bad">{error}</p> : null}
+      {(status === "error" || status === "stopped") && runId ? (
+        <p>
+          <a href={`/runs/${runId}`}>저장된 기록 보기</a>
+        </p>
+      ) : null}
 
       <div className="work">
         <div>
