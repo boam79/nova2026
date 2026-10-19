@@ -1,0 +1,33 @@
+{
+  "name": "nova-web-runner",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Browser runner for NOVA 2026 public-sample ZIP checks on Vercel",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "m0": "node scripts/m0-sandbox-spike.mjs",
+    "upload-bank": "node scripts/upload-bank.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@vercel/blob": "^2.0.0",
+    "@vercel/sandbox": "^1.0.0",
+    "jszip": "^3.10.1",
+    "next": "^15.5.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.1",
+    "playwright": "^1.55.0",
+    "typescript": "^5.9.3"
+  }
+}

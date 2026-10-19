@@ -1,0 +1,48 @@
+:root {
+  --bg: #f4efe6;
+  --ink: #1c1915;
+  --muted: #5c564c;
+  --card: #fffaf3;
+  --line: #d9d0c3;
+  --accent: #9a3412;
+  --ok: #166534;
+  --bad: #b91c1c;
+  --warn: #92400e;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 "Pretendard", "Apple SD Gothic Neo", sans-serif; }
+a { color: var(--accent); }
+main { max-width: 880px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 1.45rem; margin: 0 0 8px; }
+h2 { font-size: 1.05rem; margin: 28px 0 10px; }
+.banner { background: #fff3cd; border: 1px solid #e6d089; padding: 10px 12px; border-radius: 8px; color: var(--warn); margin: 12px 0 20px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 12px 0; }
+label { display: block; font-size: 0.9rem; margin: 10px 0 4px; }
+input[type="text"], input[type="password"], input[type="number"], select, textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff;
+}
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.hint { color: var(--muted); font-size: 0.85rem; }
+button, .btn {
+  appearance: none; border: 0; background: var(--accent); color: #fff; padding: 8px 14px; border-radius: 8px;
+  font: inherit; cursor: pointer; text-decoration: none; display: inline-block;
+}
+button.secondary { background: #44403c; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.drop {
+  border: 2px dashed var(--line); border-radius: 12px; padding: 28px; text-align: center; background: #fff;
+}
+.drop.over { border-color: var(--accent); background: #fff7ed; }
+.ok { color: var(--ok); }
+.bad { color: var(--bad); }
+.turns { background: #1c1915; color: #f4efe6; padding: 12px; border-radius: 8px; max-height: 360px; overflow: auto; font-size: 0.9rem; }
+.turns p { margin: 0 0 8px; }
+nav { display: flex; gap: 14px; margin-bottom: 16px; }
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+th, td { border-bottom: 1px solid var(--line); padding: 8px 6px; text-align: left; }
+.check { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+.check input { width: auto; }
+.progress { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.progress > span { display: block; height: 100%; background: var(--accent); }
+.metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.metrics p { margin: 8px 0; }
