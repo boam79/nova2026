@@ -19,7 +19,7 @@ import {
 } from "../lib/constants";
 import type { CaseId, ModelId } from "../lib/constants";
 import type { ProgressEvent } from "../lib/types";
-import { RUN_STORAGE_KEY, restoreRunId, searchWithRunId } from "../lib/run-id";
+import { RUN_STORAGE_KEY, restoreRunId, searchWithRunId, shouldClearSavedRun, shouldResumeSavedRun } from "../lib/run-id";
 import { shouldKeepPumping } from "../lib/run-pump";
 
 type ZipState = { pathname: string; name: string; ok: boolean; issues: { level: string; message: string }[] };
@@ -54,20 +54,31 @@ export default function RunPage() {
   }
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(RUN_STORAGE_KEY);
-      const id = restoreRunId(window.location.search, stored);
-      if (id) {
-        setRunId(id);
-        setStatus("queued");
-        persistRun(id);
+    let cancelled = false;
+    (async () => {
+      try {
+        const stored = localStorage.getItem(RUN_STORAGE_KEY);
+        const id = restoreRunId(window.location.search, stored);
+        if (!id) return;
+        const res = await fetch(`/api/runs/${id}`);
+        const data = (await res.json().catch(() => ({}))) as { meta?: { status?: string } };
+        if (cancelled) return;
+        if (res.ok && shouldResumeSavedRun(data.meta?.status)) {
+          setRunId(id);
+          setStatus(data.meta?.status || "");
+          persistRun(id);
+        } else if (shouldClearSavedRun(res.status, data.meta?.status)) {
+          persistRun("");
+        }
+      } catch {
+        /* 조회가 실패해도 홈에 남긴다. 끝난 결과로 보내지 않는다. */
       }
-    } catch {
-      /* ignore */
-    }
+    })();
     try {
       const raw = sessionStorage.getItem(KEY_SESSION);
-      if (!raw) return;
+      if (!raw) return () => {
+        cancelled = true;
+      };
       const d = JSON.parse(raw) as { apiKey?: string; doctorKey?: string; doctorModel?: string; patientModel?: string };
       const loaded = d.apiKey || d.doctorKey || "";
       setApiKey(loaded);
@@ -78,6 +89,9 @@ export default function RunPage() {
     } catch {
       /* ignore */
     }
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -195,10 +209,12 @@ export default function RunPage() {
       setProgress(data.progress || []);
       setStatus(data.meta?.status || "");
       if (data.meta?.status === "done") {
+        persistRun("");
         window.location.href = `/runs/${runId}`;
         return;
       }
       if (data.meta?.status === "error" || data.meta?.status === "stopped") {
+        persistRun("");
         setError(data.meta.error || data.error || data.meta.status);
         return;
       }

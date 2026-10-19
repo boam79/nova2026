@@ -41,6 +41,7 @@
 
 ## Executor's Feedback or Assistance Requests
 
+- 2026-10-19: 로그인하면 끝난 결과(예: submission-v10 `/runs/[id]`)로 강제 이동하던 버그. 원인: `localStorage`의 실행 id를 상태 확인 없이 복원 → `status===""`이라 폴링이 살아 있는 줄 알고 `done`이면 `/runs/[id]`로 보냄. 수정: queued/running만 다시 붙이고, done/error/stopped/404는 저장을 지운 뒤 실행 화면에 남김. 기록 목록에서 예전 결과는 그대로 볼 수 있음. 사람 확인: 배포 HTTPS에서 로그인 후 결과로 안 가는지.
 - 2026-10-19: 실행 화면에 OpenAI 총잔액 표시. 넣은 키로 `credit_grants`를 읽고, 안 되면 이번 달 `organization/costs` 사용액만 보여 준다. 키는 서버에 저장하지 않는다.
 - 2026-10-19: 새로고침·창 닫아도 실행이 끝나게. POST는 queued 메타를 바로 돌려 `after()`에서 샌드박스를 만들고 펌프한다. `/api/runs/[id]/continue`가 함수 시간 전에 다음 조각을 잇는다. 화면은 `localStorage`·`/?run=`으로 다시 붙는다. 중지는 명시 버튼만. 키는 Blob에 저장하지 않는다.
 - 모드: Executor. 사용자 확인: M1만 진행. GitHub 원격 생성하지 않음(비공개로 만들 필요 없음).
