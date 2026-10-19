@@ -2,6 +2,7 @@ import { BLOCKED_HOST, OPENAI_BASE } from "./constants.ts";
 import { assertNoSecrets, maskText } from "./mask.ts";
 
 export type OpenAIBalanceSource = "credit_grants" | "costs" | "none";
+export type OpenAIBalanceErrorKind = "permission" | "auth" | "other";
 
 export type OpenAIBalanceReport = {
   fetchedAt: string;
@@ -11,6 +12,7 @@ export type OpenAIBalanceReport = {
   monthSpend: number | null;
   source: OpenAIBalanceSource;
   error?: string;
+  errorKind?: OpenAIBalanceErrorKind;
 };
 
 export function monthStartUnix(now = new Date()): number {
@@ -22,13 +24,20 @@ export function formatUsd(n: number | null | undefined): string {
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+export function balanceErrorKind(status: number): OpenAIBalanceErrorKind {
+  if (status === 403) return "permission";
+  if (status === 401) return "auth";
+  return "other";
+}
+
 export function balanceHttpHint(status: number): string {
   const hint: Record<number, string> = {
     401: "키가 틀렸거나 만료됨",
-    403: "이 키로는 잔액을 읽을 수 없습니다",
+    403: "진료용 API 키로는 잔액을 못 읽습니다. 실행은 됩니다. 남은 크레딧은 OpenAI 결제 화면에서 보세요.",
     404: "잔액 API를 찾을 수 없습니다",
     429: "사용 한도·요금 확인",
   };
+  if (status === 403) return hint[403];
   return `HTTP ${status} (${hint[status] || "주소·네트워크 확인"})`;
 }
 
@@ -135,7 +144,11 @@ export async function fetchOpenAIBalance(key: string, now = new Date()): Promise
       return report;
     }
     const status = grantsStatus || costs.status;
-    return { ...empty, error: maskText(balanceHttpHint(status), [trimmed]) };
+    return {
+      ...empty,
+      error: maskText(balanceHttpHint(status), [trimmed]),
+      errorKind: balanceErrorKind(status),
+    };
   } catch (err) {
     return {
       ...empty,

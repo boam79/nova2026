@@ -57,7 +57,7 @@ export function OpenAIBalancePanel({ apiKey }: { apiKey: string }) {
     <section className="blob-bar" aria-label="OpenAI 잔액">
       <strong>OpenAI 잔액</strong>
       {!key ? (
-        <span className="hint">키를 넣으면 총잔액을 봅니다.</span>
+        <span className="hint">진료용 키로는 보통 잔액을 못 읽고, 실행은 됩니다.</span>
       ) : data?.source === "credit_grants" ? (
         <>
           <span className={low ? "bad" : "ok"}>{formatUsd(available)}</span>
@@ -71,13 +71,15 @@ export function OpenAIBalancePanel({ apiKey }: { apiKey: string }) {
           <span>이번 달 사용 {formatUsd(data.monthSpend)}</span>
           <span className="hint">남은 크레딧은 이 키로 안 읽혀 사용액만 표시합니다.</span>
         </>
+      ) : data?.errorKind === "permission" ? (
+        <span className="hint">{error || "진료용 키로는 잔액을 못 읽습니다. 실행은 됩니다."}</span>
       ) : (
         <span className="hint">{busy ? "읽는 중…" : "아직 못 읽었습니다."}</span>
       )}
       <button type="button" className="secondary" onClick={load} disabled={busy || !key}>
         {busy ? "읽는 중…" : "새로고침"}
       </button>
-      {error ? <span className="bad">{error}</span> : null}
+      {error && data?.errorKind !== "permission" ? <span className="bad">{error}</span> : null}
     </section>
   );
 }

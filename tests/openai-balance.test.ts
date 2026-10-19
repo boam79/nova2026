@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  balanceErrorKind,
   balanceHttpHint,
   formatUsd,
   monthStartUnix,
@@ -48,7 +49,11 @@ test("usd formatter and month start are stable", () => {
 });
 
 test("http hints stay korean and never echo a key", () => {
-  assert.match(balanceHttpHint(403), /이 키로는 잔액을 읽을 수 없습니다/);
+  assert.match(balanceHttpHint(403), /진료용 API 키로는 잔액을 못 읽습니다/);
+  assert.equal(balanceHttpHint(403).includes("HTTP 403"), false);
   assert.match(balanceHttpHint(401), /만료/);
   assert.equal(balanceHttpHint(403).includes("sk-"), false);
+  assert.equal(balanceErrorKind(403), "permission");
+  assert.equal(balanceErrorKind(401), "auth");
+  assert.equal(balanceErrorKind(500), "other");
 });
