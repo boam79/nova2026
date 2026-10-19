@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { CASES, CALL_LIMIT_DEFAULT, DEFAULT_DOCTOR_MODEL, DEFAULT_PATIENT_MODEL, MAX_CONCURRENT_RUNS } from "../../../lib/constants";
+import { CASES, CALL_LIMIT_DEFAULT, DEFAULT_DOCTOR_MODEL, DEFAULT_PATIENT_MODEL, MAX_CONCURRENT_RUNS, clampRep } from "../../../lib/constants";
 import { listMetas, lockSnapshot, startRun } from "../../../lib/sandbox-run";
 import { resolveRunMode } from "../../../lib/run-mode";
 import { BusyError } from "../../../lib/run-lock";
@@ -21,6 +21,7 @@ export async function POST(req: Request) {
     candidate?: string;
     cases?: string[];
     reps?: number;
+    repsByCase?: Record<string, number>;
     mode?: RunMode;
     apiKey?: string;
     doctorKey?: string;
@@ -31,6 +32,10 @@ export async function POST(req: Request) {
   try {
     if (!body.zipPath) return NextResponse.json({ error: "ZIP이 없습니다." }, { status: 400 });
     const cases = (body.cases || []).filter((c): c is CaseId => (CASES as readonly string[]).includes(c));
+    const selected = cases.length ? cases : [...CASES];
+    const repsByCase = Object.fromEntries(
+      selected.map((c) => [c, clampRep(Number(body.repsByCase?.[c] ?? body.reps ?? 1))]),
+    ) as Partial<Record<CaseId, number>>;
     const apiKey = String(body.apiKey || body.doctorKey || "").trim();
     const mode: RunMode = resolveRunMode(body.mode, apiKey);
     if (body.mode === "api" && !apiKey) {
@@ -39,8 +44,9 @@ export async function POST(req: Request) {
     const meta = await startRun({
       zipPath: body.zipPath,
       candidate: body.candidate || "submission",
-      cases: cases.length ? cases : [...CASES],
-      reps: body.reps || 1,
+      cases: selected,
+      reps: Math.max(...Object.values(repsByCase)),
+      repsByCase,
       mode,
       doctorKey: mode === "api" ? apiKey : "",
       patientKey: mode === "api" ? apiKey : "",

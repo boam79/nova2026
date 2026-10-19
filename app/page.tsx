@@ -13,6 +13,7 @@ import {
   MAX_CONCURRENT_RUNS,
   MODELS,
   asModelId,
+  clampRep,
   estimateCalls,
 } from "../lib/constants";
 import type { CaseId, ModelId } from "../lib/constants";
@@ -28,7 +29,7 @@ export default function RunPage() {
   const [zip, setZip] = useState<ZipState | null>(null);
   const [over, setOver] = useState(false);
   const [cases, setCases] = useState<CaseId[]>([...CASES]);
-  const [reps, setReps] = useState(1);
+  const [repByCase, setRepByCase] = useState<Record<CaseId, number>>({ C01: 1, C03: 1, C10: 1 });
   const [mode, setMode] = useState<"replay" | "api">("replay");
   const [callLimit, setCallLimit] = useState(CALL_LIMIT_DEFAULT);
   const [busy, setBusy] = useState("");
@@ -65,11 +66,17 @@ export default function RunPage() {
     );
   }, [remember, apiKey, doctorModel, patientModel]);
 
+  const runCount = cases.reduce((sum, c) => sum + clampRep(repByCase[c] || 1), 0);
+  const repsByCase = useMemo(() => {
+    const out: Partial<Record<CaseId, number>> = {};
+    for (const c of cases) out[c] = clampRep(repByCase[c] || 1);
+    return out;
+  }, [cases, repByCase]);
   const estimated = useMemo(
-    () => estimateCalls(mode, cases.length, reps, callLimit),
-    [mode, cases.length, reps, callLimit],
+    () => estimateCalls(mode, runCount, callLimit),
+    [mode, runCount, callLimit],
   );
-  const maxTurn = Math.max(1, cases.length * reps * 50);
+  const maxTurn = Math.max(1, runCount * 50);
   const pct = Math.min(100, Math.round(((progress.at(-1)?.turn || 0) / maxTurn) * 100));
 
   async function onFile(file: File) {
@@ -126,7 +133,7 @@ export default function RunPage() {
         zipPath: zip.pathname,
         candidate: zip.name.replace(/\.zip$/i, ""),
         cases,
-        reps,
+        repsByCase,
         mode: apiKey.trim() ? "api" : "replay",
         apiKey,
         doctorModel,
@@ -175,182 +182,211 @@ export default function RunPage() {
   }
 
   return (
-    <main>
-      <Nav />
-      <h1>실행</h1>
+    <main className="workspace">
+      <header className="topbar">
+        <div>
+          <Nav />
+          <h1>실행</h1>
+        </div>
+        <BlobUsagePanel />
+      </header>
       <Disclaimer />
-      <BlobUsagePanel />
+      {busy ? <p className="hint">{busy}</p> : null}
+      {error ? <p className="bad">{error}</p> : null}
 
-      <section className="card">
-        <h2>OpenAI 키</h2>
-        <p className="hint">본인 OpenAI 키만 쓰세요. 대회 개발 키는 넣지 마세요. 호출 주소는 api.openai.com으로 고정입니다. 키는 서버에 저장하지 않습니다. 키를 넣으면 실제 모델, 비우면 재연입니다.</p>
-        <label htmlFor="api-key">OpenAI 키</label>
-        <input
-          id="api-key"
-          type="password"
-          autoComplete="off"
-          value={apiKey}
-          onChange={(e) => {
-            const v = e.target.value;
-            setApiKey(v);
-            setMode(v.trim() ? "api" : "replay");
-          }}
-          placeholder="sk-… (비우면 재연)"
-        />
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={remember}
-            onChange={(e) => {
-              setRemember(e.target.checked);
-            }}
-          />
-          이 탭에서만 기억 (sessionStorage). localStorage에는 두지 않습니다.
-        </label>
-        <div className="row">
-          <div>
-            <label htmlFor="doctor-model">닥터 모델</label>
-            <select
-              id="doctor-model"
-              value={doctorModel}
-              onChange={(e) => setDoctorModel(asModelId(e.target.value, DEFAULT_DOCTOR_MODEL))}
+      <div className="work">
+        <div>
+          <section className="card">
+            <h2>제출 ZIP</h2>
+            <p className="hint">공개 샘플·합성 증례만. 비공개 증례·채점 정보·비공개 대화록을 올리지 마세요.</p>
+            <div
+              className={`drop ${over ? "over" : ""}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setOver(true);
+              }}
+              onDragLeave={() => setOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setOver(false);
+                const f = e.dataTransfer.files[0];
+                if (f) onFile(f);
+              }}
             >
-              {MODELS.map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="patient-model">환자 모델</label>
-            <select
-              id="patient-model"
-              value={patientModel}
-              onChange={(e) => setPatientModel(asModelId(e.target.value, DEFAULT_PATIENT_MODEL))}
-            >
-              {MODELS.map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <p className="hint">기본은 닥터·환자 모두 gpt-6-luna(로컬 실행기·샘플 검증 참고). 환자 gpt-6.1-sol은 공식 평가처럼 근사할 때만. 공식 환자 모델은 공개되지 않았습니다.</p>
-        <p>
-          <button type="button" className="secondary" onClick={checkConn} disabled={Boolean(busy)}>
-            연결 점검
-          </button>
-        </p>
-        {preflight ? <p className={preflight.includes("실패") || preflight.includes("HTTP") ? "bad" : "ok"}>{preflight}</p> : null}
-      </section>
+              <p>끌어놓거나 파일을 고르세요</p>
+              <input
+                type="file"
+                accept=".zip,application/zip"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) onFile(f);
+                }}
+              />
+            </div>
+            {zip ? (
+              <p>
+                {zip.name} {zip.ok ? <span className="ok">검증 통과</span> : <span className="bad">검증 실패</span>}
+              </p>
+            ) : null}
+            {zip?.issues.length ? (
+              <ul>
+                {zip.issues.map((i, n) => (
+                  <li key={n} className={i.level === "ERROR" ? "bad" : ""}>
+                    {i.message}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
 
-      <section className="card">
-        <h2>제출 ZIP</h2>
-        <p className="hint">공개 샘플·합성 증례만. 비공개 증례·채점 정보·비공개 대화록을 올리지 마세요.</p>
-        <div
-          className={`drop ${over ? "over" : ""}`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setOver(true);
-          }}
-          onDragLeave={() => setOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setOver(false);
-            const f = e.dataTransfer.files[0];
-            if (f) onFile(f);
-          }}
-        >
-          <p>끌어놓거나 파일을 고르세요</p>
-          <input
-            type="file"
-            accept=".zip,application/zip"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) onFile(f);
-            }}
-          />
-        </div>
-        {zip ? (
-          <div>
-            <p>
-              {zip.name} {zip.ok ? <span className="ok">검증 통과</span> : <span className="bad">검증 실패</span>}
-            </p>
-            <ul>
-              {zip.issues.map((i, n) => (
-                <li key={n} className={i.level === "ERROR" ? "bad" : ""}>
-                  {i.message}
+          <section className="card">
+            <h2>실행 설정</h2>
+            <div className="case-head">
+              <span>증례</span>
+              <span>횟수</span>
+            </div>
+            <ul className="case-list">
+              {CASES.map((c) => (
+                <li key={c}>
+                  <label className="check">
+                    <input type="checkbox" checked={cases.includes(c)} onChange={() => toggleCase(c)} />
+                    {c}
+                  </label>
+                  <input
+                    aria-label={`${c} 횟수`}
+                    type="number"
+                    min={1}
+                    max={5}
+                    value={repByCase[c]}
+                    disabled={!cases.includes(c)}
+                    onChange={(e) =>
+                      setRepByCase((prev) => ({ ...prev, [c]: clampRep(Number(e.target.value) || 1) }))
+                    }
+                  />
                 </li>
               ))}
             </ul>
-          </div>
-        ) : null}
-      </section>
+            <label htmlFor="run-mode">모드</label>
+            <select id="run-mode" value={mode} disabled>
+              <option value="replay">재연 (키 없이, 무료)</option>
+              <option value="api">실제 모델 (OpenAI)</option>
+            </select>
+            <p className="hint">
+              {mode === "api"
+                ? "실제 모델입니다. 공식 샘플은 증례당 약 150–190초입니다. 수십 초면 재연입니다."
+                : "재연입니다. 키를 넣으면 실제 모델로 바뀝니다."}
+            </p>
+            <label htmlFor="call-limit">실행당 호출 수 상한</label>
+            <input
+              id="call-limit"
+              type="number"
+              min={1}
+              max={200}
+              value={callLimit}
+              onChange={(e) => setCallLimit(Number(e.target.value) || 200)}
+            />
+            <p className="hint">
+              선택 {cases.length}개 · 합계 {runCount}회 · 예상 호출 {estimated}. 동시 실행은 최대 {MAX_CONCURRENT_RUNS}개입니다.
+            </p>
+            <button type="button" onClick={start} disabled={!zip?.ok || !cases.length || Boolean(busy) || status === "running"}>
+              실행
+            </button>
+          </section>
+        </div>
 
-      <section className="card">
-        <h2>실행 설정</h2>
-        <p>증례</p>
-        {CASES.map((c) => (
-          <label key={c} className="check">
-            <input type="checkbox" checked={cases.includes(c)} onChange={() => toggleCase(c)} />
-            {c}
-          </label>
-        ))}
-        <label>반복 횟수</label>
-        <input type="number" min={1} max={5} value={reps} onChange={(e) => setReps(Number(e.target.value) || 1)} />
-        <label htmlFor="run-mode">모드</label>
-        <select id="run-mode" value={mode} disabled>
-          <option value="replay">재연 (키 없이, 무료)</option>
-          <option value="api">실제 모델 (OpenAI)</option>
-        </select>
-        <p className="hint">
-          {mode === "api"
-            ? "실제 모델입니다. 공식 샘플 검증은 증례당 약 150–190초, 리더보드는 약 200–230초입니다. 수십 초면 재연입니다. 진찰은 항상 bank입니다."
-            : "재연입니다. 키를 넣으면 실제 모델로 바뀝니다."}
-        </p>
-        <label>실행당 호출 수 상한</label>
-        <input type="number" min={1} max={200} value={callLimit} onChange={(e) => setCallLimit(Number(e.target.value) || 200)} />
-        <p className="hint">예상 호출 수: {estimated} (재연은 0). 실제 모델은 키 소유자가 비용을 부담합니다. 동시 실행은 최대 {MAX_CONCURRENT_RUNS}개입니다. 4번째부터는 거절됩니다.</p>
-        <button type="button" onClick={start} disabled={!zip?.ok || !cases.length || Boolean(busy) || status === "running"}>
-          실행
-        </button>
-      </section>
+        <div className="sticky-col">
+          <section className="card">
+            <h2>OpenAI 키</h2>
+            <p className="hint">본인 키만. 대회 개발 키는 넣지 마세요. 서버에 저장하지 않습니다.</p>
+            <label htmlFor="api-key">OpenAI 키</label>
+            <input
+              id="api-key"
+              type="password"
+              autoComplete="off"
+              value={apiKey}
+              onChange={(e) => {
+                const v = e.target.value;
+                setApiKey(v);
+                setMode(v.trim() ? "api" : "replay");
+              }}
+              placeholder="sk-… (비우면 재연)"
+            />
+            <label className="check">
+              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+              이 탭에서만 기억
+            </label>
+            <div className="row">
+              <div>
+                <label htmlFor="doctor-model">닥터 모델</label>
+                <select
+                  id="doctor-model"
+                  value={doctorModel}
+                  onChange={(e) => setDoctorModel(asModelId(e.target.value, DEFAULT_DOCTOR_MODEL))}
+                >
+                  {MODELS.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="patient-model">환자 모델</label>
+                <select
+                  id="patient-model"
+                  value={patientModel}
+                  onChange={(e) => setPatientModel(asModelId(e.target.value, DEFAULT_PATIENT_MODEL))}
+                >
+                  {MODELS.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <button type="button" className="secondary" onClick={checkConn} disabled={Boolean(busy)}>
+              연결 점검
+            </button>
+            {preflight ? <p className={preflight.includes("실패") || preflight.includes("HTTP") ? "bad" : "ok"}>{preflight}</p> : null}
+          </section>
 
-      {busy ? <p>{busy}</p> : null}
-      {error ? <p className="bad">{error}</p> : null}
-
-      {runId ? (
-        <section className="card">
-          <h2>진행</h2>
-          <div className="progress">
-            <span style={{ width: `${pct}%` }} />
-          </div>
-          <p className="hint">
-            {status} · {mode === "api" ? "실제 모델" : "재연"} · 턴 {progress.at(-1)?.turn || 0} / 약 {maxTurn}
-          </p>
-          <button
-            type="button"
-            className="secondary"
-            onClick={async () => {
-              await fetch(`/api/runs/${runId}/stop`, { method: "POST" });
-            }}
-            disabled={status !== "running"}
-          >
-            중지
-          </button>
-          <div className="turns">
-            {progress.map((p, i) => (
-              <p key={i}>
-                [{p.kind} {p.turn}] 의사: {p.doctor}
-                <br />
-                환자: {p.patient}
-              </p>
-            ))}
-          </div>
-        </section>
-      ) : null}
+          <section className="card">
+            <h2>진행</h2>
+            {runId ? (
+              <>
+                <div className="progress">
+                  <span style={{ width: `${pct}%` }} />
+                </div>
+                <p className="hint">
+                  {status} · {mode === "api" ? "실제 모델" : "재연"} · 턴 {progress.at(-1)?.turn || 0} / 약 {maxTurn}
+                </p>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={async () => {
+                    await fetch(`/api/runs/${runId}/stop`, { method: "POST" });
+                  }}
+                  disabled={status !== "running"}
+                >
+                  중지
+                </button>
+                <div className="turns">
+                  {progress.map((p, i) => (
+                    <p key={i}>
+                      [{p.kind} {p.turn}] 의사: {p.doctor}
+                      <br />
+                      환자: {p.patient}
+                    </p>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="hint">실행하면 대화가 여기에 쌓입니다.</p>
+            )}
+          </section>
+        </div>
+      </div>
     </main>
   );
 }

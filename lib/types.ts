@@ -18,6 +18,7 @@ export type RunMeta = {
   zipPath: string;
   cases: CaseId[];
   reps: number;
+  repsByCase?: Partial<Record<CaseId, number>>;
   mode: RunMode;
   doctorModel: string;
   patientModel: string;

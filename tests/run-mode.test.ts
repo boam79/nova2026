@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveRunMode, runnerLaunchArgs } from "../lib/run-mode.ts";
+import { estimateCalls } from "../lib/constants.ts";
+import { formatRepsArg, resolveRunMode, runnerLaunchArgs } from "../lib/run-mode.ts";
 
 test("empty key is always replay even if client asked for api", () => {
   assert.equal(resolveRunMode("api", ""), "replay");
@@ -38,4 +39,19 @@ test("api launch is not offline and passes keys", () => {
   assert.equal(launch.args.includes("--offline"), false);
   assert.ok(launch.args.includes("gpt-6-luna"));
   assert.ok(launch.args.includes("gpt-6.1-sol"));
+});
+
+test("each case can carry its own repeat count", () => {
+  assert.equal(formatRepsArg(["C01", "C03", "C10"], { C01: 2, C03: 1, C10: 9 }), "C01=2,C03=1,C10=5");
+  const launch = runnerLaunchArgs({
+    cases: ["C01", "C10"],
+    repsByCase: { C01: 3, C10: 1 },
+    doctorModel: "gpt-6-luna",
+    patientModel: "gpt-6-luna",
+    mode: "replay",
+  });
+  assert.ok(launch.args.includes("C01=3,C10=1"));
+  assert.equal(estimateCalls("api", 3, 200), 180);
+  assert.equal(estimateCalls("api", 4, 200), 200);
+  assert.equal(estimateCalls("replay", 4, 200), 0);
 });

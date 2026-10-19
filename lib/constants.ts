@@ -43,7 +43,12 @@ export function asModelId(value: string | undefined, fallback: ModelId): ModelId
   return (MODELS as readonly string[]).includes(value || "") ? (value as ModelId) : fallback;
 }
 
-export function estimateCalls(mode: "replay" | "api", caseCount: number, reps: number, callLimit = 200): number {
+export function clampRep(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(1, Math.min(5, Math.round(value)));
+}
+
+export function estimateCalls(mode: "replay" | "api", runCount: number, callLimit = 200): number {
   if (mode === "replay") return 0;
-  return Math.min(callLimit, Math.max(1, caseCount) * Math.max(1, reps) * 60);
+  return Math.min(callLimit, Math.max(1, runCount) * 60);
 }

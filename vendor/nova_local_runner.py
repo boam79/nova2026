@@ -705,6 +705,26 @@ def summary_md(name, sha, rows, mode):
     return '\n'.join(out) + '\n'
 
 
+def reps_for_cases(raw, cases):
+    """숫자면 모든 증례에 같은 횟수. 'C01=2,C03=1'이면 증례마다 다른 횟수. 1~5."""
+    if isinstance(raw, int):
+        n = max(1, min(5, raw))
+        return {c: n for c in cases}
+    text = str(raw or "1").strip()
+    if text.isdigit():
+        n = max(1, min(5, int(text)))
+        return {c: n for c in cases}
+    found = {}
+    for part in text.split(","):
+        if "=" not in part:
+            continue
+        name, num = part.split("=", 1)
+        name, num = name.strip(), num.strip()
+        if name and num.isdigit():
+            found[name] = max(1, min(5, int(num)))
+    return {c: found.get(c, 1) for c in cases}
+
+
 def run_one_version(src, cases, reps, keys, settings, log):
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     name = Path(src).stem if Path(src).suffix == '.zip' else Path(src).name
@@ -728,10 +748,12 @@ def run_one_version(src, cases, reps, keys, settings, log):
     env['PYTHONIOENCODING'] = 'utf-8'
     env['NOVA_LOCAL_CHILD_DOCTOR_KEY'] = keys['doctor']
     env['NOVA_LOCAL_CHILD_PATIENT_KEY'] = keys['patient']
+    repmap = reps_for_cases(reps, cases)
     labels = []
     for cid in cases:
-        for r in range(1, reps + 1):
-            label = cid if reps == 1 else f'{cid}_r{r}'
+        n = repmap[cid]
+        for r in range(1, n + 1):
+            label = cid if n == 1 else f'{cid}_r{r}'
             cfg = dict(settings, case=cid, rep=r, agent_dir=str(agent), transcript=str(out / f'{label}.json'),
                        candidate=name, run_id=f'{stamp}_{label}',
                        progress=str(work / 'progress.jsonl'), call_limit=settings.get('call_limit', CALL_LIMIT))
@@ -756,7 +778,7 @@ def run_one_version(src, cases, reps, keys, settings, log):
             if (agent / f).exists():
                 z.write(agent / f, f'agent/{f}')
         meta = {'runner': VERSION, 'candidate': name, 'zip_name': Path(src).name, 'run': stamp, 'zip_sha256': sha,
-                'cases': cases, 'reps': {c: reps for c in cases}, 'runs': labels,
+                'cases': cases, 'reps': repmap, 'runs': labels,
                 'local': {'mode': mode, 'doctor_model': settings['doctor_model'] if keys['doctor'] else None,
                           'patient_model': settings['patient_model'] if keys['patient'] else None,
                           'bank_runs': {c: len(load_bank(c).get('sources') or []) for c in cases}}}
@@ -815,7 +837,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description='NOVA 2026 로컬 샘플 실행기 (개발 키 없이)')
     ap.add_argument('--zip', action='append', default=[], help='제출 ZIP 또는 에이전트 폴더(run.py, nova_sdk.py). 여러 번 주면 판마다 같은 조건으로')
     ap.add_argument('--cases', default='', help='쉼표로(기본: bank에 있는 증례 전부)')
-    ap.add_argument('--reps', type=int, default=1, help='증례마다 반복 횟수. 오프라인은 반복마다 다른 실제 실행을 재연한다')
+    ap.add_argument('--reps', default='1', help='반복 횟수. 숫자(모든 증례) 또는 C01=2,C03=1. 오프라인은 반복마다 다른 실제 실행을 재연한다')
     ap.add_argument('--ask-key', action='store_true', help='API 키를 입력받는다(화면에 안 보임, 저장하지 않음)')
     ap.add_argument('--key-file', default='', help=f'키 파일(기본 {KEY_FILE}). "NOVA_LOCAL_DOCTOR_KEY=..." 또는 키 한 줄')
     ap.add_argument('--offline', action='store_true', help='키가 있어도 쓰지 않는다')
@@ -857,7 +879,7 @@ def main(argv=None):
     RUNS.mkdir(parents=True, exist_ok=True)
     results = []
     for src in a.zip:
-        results.append(run_one_version(src, cases, max(1, a.reps), keys, s, print))
+        results.append(run_one_version(src, cases, a.reps, keys, s, print))
     if len(results) > 1:
         print('\n판 비교 (평균)')
         for (res, rows), src in zip(results, a.zip):

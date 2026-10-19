@@ -10,10 +10,6 @@ function fmt(n: number | undefined): string {
   return Math.round(n).toLocaleString("ko-KR");
 }
 
-function fmtMb(bytes: number): string {
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
-
 function storeLabel(store: BlobUsageReport["store"] | undefined): string {
   if (!store) return "조회 안 됨";
   if (store.billingState === "suspended" || store.status.includes("suspended")) return "정지";
@@ -52,41 +48,18 @@ export function BlobUsagePanel() {
   }, [load]);
 
   const store = data?.store;
-  const billed = data?.billing;
   const inst = data?.instance;
-  const ok = store && store.billingState === "active" && !store.usageQuotaExceeded;
+  const label = storeLabel(store ?? null);
 
   return (
-    <section className="card" aria-labelledby="blob-usage-heading">
-      <h2 id="blob-usage-heading">Blob 횟수</h2>
-      <p className={ok ? "ok" : store?.billingState === "suspended" ? "bad" : "hint"}>
-        스토어: {storeLabel(store ?? null)}
-        {store ? ` · ${fmtMb(store.sizeBytes)} · 파일 ${fmt(store.fileCount)}개` : ""}
-      </p>
-      <div className="metrics">
-        <p>
-          <strong>Advanced (list·업로드)</strong>
-          <br />
-          과금 {fmt(billed?.advanced)}회 · 이 앱 {fmt(inst?.advanced)}회
-          <br />
-          <span className="hint">list {fmt(inst?.list)} · 업로드 {fmt(inst?.put)}</span>
-        </p>
-        <p>
-          <strong>Simple (읽기 등)</strong>
-          <br />
-          과금 {fmt(billed?.simple)}회 · 이 앱 {fmt(inst?.simple)}회
-        </p>
-      </div>
-      <p className="hint">{data?.note || "진행 폴링과는 따로, 최대 1분마다 갱신합니다. Blob list를 집계용으로 치지 않습니다."}</p>
-      {error ? <p className="hint">{error}</p> : null}
-      <p>
-        <button type="button" className="secondary" onClick={load} disabled={busy}>
-          {busy ? "읽는 중…" : "새로고침"}
-        </button>
-        {data?.fetchedAt ? (
-          <span className="hint"> {new Date(data.fetchedAt).toLocaleString("ko-KR")}</span>
-        ) : null}
-      </p>
-    </section>
+    <p className="blob-mini" aria-label="Blob 횟수" title={data?.note || "이 앱이 센 Blob 횟수"}>
+      <span>Blob {label}</span>
+      <span>Adv {fmt(inst?.advanced)}</span>
+      <span>Sim {fmt(inst?.simple)}</span>
+      <button type="button" className="secondary" onClick={load} disabled={busy}>
+        {busy ? "…" : "갱신"}
+      </button>
+      {error ? <span>{error}</span> : null}
+    </p>
   );
 }

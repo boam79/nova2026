@@ -48,7 +48,11 @@ export default function RunsPage() {
               <td>
                 <a href={`/runs/${r.id}`}>{r.candidate}</a>
               </td>
-              <td>{r.cases.join(", ")}</td>
+              <td>
+                {r.cases
+                  .map((c) => (r.repsByCase?.[c] ? `${c}×${r.repsByCase[c]}` : c))
+                  .join(", ")}
+              </td>
               <td>{r.status}</td>
               <td>
                 <a href={`/runs/${r.id}`}>열람</a>{" "}

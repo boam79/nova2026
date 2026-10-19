@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Sandbox } from "@vercel/sandbox";
-import { CALL_LIMIT_DEFAULT, CASES, MAX_CONCURRENT_RUNS, OPENAI_BASE, TURN_LIMIT } from "./constants";
+import { CALL_LIMIT_DEFAULT, CASES, MAX_CONCURRENT_RUNS, OPENAI_BASE, TURN_LIMIT, clampRep } from "./constants";
 import { deletePrefix, getPrivateBuffer, putPrivate } from "./blob";
 import { assertNoSecrets, maskText, scrubValue } from "./mask";
 import { summarizeTranscript, transcriptToText, type Transcript, type Side } from "./summary";
@@ -129,6 +129,7 @@ export async function startRun(opts: {
   candidate: string;
   cases: CaseId[];
   reps: number;
+  repsByCase?: Partial<Record<CaseId, number>>;
   mode: RunMode;
   doctorKey: string;
   patientKey: string;
@@ -149,13 +150,17 @@ export async function startRun(opts: {
     await releaseLock(id);
     throw new Error("cases");
   }
+  const repsByCase = Object.fromEntries(
+    (cases as CaseId[]).map((c) => [c, clampRep(opts.repsByCase?.[c] ?? opts.reps ?? 1)]),
+  ) as Partial<Record<CaseId, number>>;
   const meta: RunMeta = {
     id,
     createdAt: new Date().toISOString(),
     candidate: opts.candidate.replace(/[^\w.\-가-힣]+/g, "_").slice(0, 80),
     zipPath: opts.zipPath,
     cases: cases as CaseId[],
-    reps: Math.max(1, Math.min(5, opts.reps || 1)),
+    reps: Math.max(...Object.values(repsByCase).map((n) => n || 1)),
+    repsByCase,
     mode: opts.mode,
     doctorModel: opts.doctorModel,
     patientModel: opts.patientModel,
@@ -195,7 +200,7 @@ export async function startRun(opts: {
     });
     const launch = runnerLaunchArgs({
       cases,
-      reps: meta.reps,
+      repsByCase: repsByCase as Record<string, number>,
       doctorModel: opts.doctorModel,
       patientModel: opts.patientModel,
       mode: opts.mode,

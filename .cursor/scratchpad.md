@@ -77,3 +77,4 @@
 - 로그인 입력은 React state를 써야 한다. 브라우저 자동화는 `fill`만으로 부족할 수 있어 글자 단위 입력이 안전하다. 채팅에 OpenAI 키는 찍지 말 것. 접속 비밀번호는 사용자가 알려 달라고 한 경우에만 안내.
 - Next 의존 postcss 취약은 `npm audit fix --force`(Next 16)로 올리지 않는다.
 - Hobby Blob Advanced(list·upload)는 월 2,000. 진행 조회에서 `listPrefix("runs/")`를 1.2초마다 치면 금방 찬다. loadMeta는 경로로 get 하고, 진행은 Blob에 매 틱 put 하지 말 것.
+- 2026-10-19: 증례마다 횟수(`C01=2,C03=1`). 실행 화면은 왼쪽 설정·오른쪽 키/진행. Blob 횟수는 한 줄. GitHub `boam79/nova2026`는 푸시만 되고, Vercel 프로젝트 `nova-web-runner`는 Git 연결이 없었다(CLI 배포).
