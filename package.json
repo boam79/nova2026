@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "next start",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "smoke:durable": "node scripts/smoke-durable.mjs",
     "m0": "node scripts/m0-sandbox-spike.mjs",
     "upload-bank": "node scripts/upload-bank.mjs"
   },

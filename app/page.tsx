@@ -18,6 +18,31 @@ import {
 } from "../lib/constants";
 import type { CaseId, ModelId } from "../lib/constants";
 import type { ProgressEvent } from "../lib/types";
+import { ACTIVE_RUN_STORAGE_KEY, resumeRunView, shouldResumePoll } from "../lib/durable-run";
+
+function rememberRun(id: string) {
+  try {
+    localStorage.setItem(ACTIVE_RUN_STORAGE_KEY, id);
+  } catch {
+    /* ignore */
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set("run", id);
+  window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+}
+
+function forgetRun() {
+  try {
+    localStorage.removeItem(ACTIVE_RUN_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("run")) return;
+  url.searchParams.delete("run");
+  const search = url.searchParams.toString();
+  window.history.replaceState(null, "", search ? `${url.pathname}?${search}` : url.pathname);
+}
 
 type ZipState = { pathname: string; name: string; ok: boolean; issues: { level: string; message: string }[] };
 
@@ -38,6 +63,20 @@ export default function RunPage() {
   const [progress, setProgress] = useState<ProgressEvent[]>([]);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    let stored = "";
+    try {
+      stored = localStorage.getItem(ACTIVE_RUN_STORAGE_KEY) || "";
+    } catch {
+      stored = "";
+    }
+    const resumed = resumeRunView({ urlRunId: params.get("run"), storedRunId: stored });
+    if (!resumed) return;
+    setRunId(resumed.runId);
+    setStatus("running");
+  }, []);
 
   useEffect(() => {
     try {
@@ -153,25 +192,37 @@ export default function RunPage() {
       return;
     }
     setRunId(data.id);
-    setStatus("running");
+    setStatus(data.meta?.status || "queued");
     setProgress([]);
+    rememberRun(data.id);
   }
 
   useEffect(() => {
-    if (!runId || (status !== "running" && status !== "")) return;
+    if (!runId) return;
+    if (status && !shouldResumePoll(status)) return;
     let stop = false;
     async function tick() {
       const res = await fetch(`/api/runs/${runId}`);
       const data = await res.json();
       if (stop) return;
+      if (!res.ok || !data.meta) {
+        forgetRun();
+        setRunId("");
+        setStatus("");
+        if (data.error && data.error !== "없음") setError(data.error);
+        return;
+      }
       setProgress(data.progress || []);
-      setStatus(data.meta?.status || "");
-      if (data.meta?.status === "done") {
+      const next = data.meta.status || "";
+      setStatus(next);
+      if (next === "done") {
+        forgetRun();
         window.location.href = `/runs/${runId}`;
         return;
       }
-      if (data.meta?.status === "error" || data.meta?.status === "stopped") {
-        setError(data.meta.error || data.error || data.meta.status);
+      if (next === "error" || next === "stopped") {
+        forgetRun();
+        setError(data.meta?.error || data.error || next);
         return;
       }
       setTimeout(tick, 1200);
@@ -255,7 +306,11 @@ export default function RunPage() {
             <p className="hint">
               선택 {cases.length}개 · 합계 {runCount}회 · 예상 호출 {estimated}. 동시 실행은 최대 {MAX_CONCURRENT_RUNS}개입니다.
             </p>
-            <button type="button" onClick={start} disabled={!zip?.ok || !cases.length || Boolean(busy) || status === "running"}>
+            <button
+              type="button"
+              onClick={start}
+              disabled={!zip?.ok || !cases.length || Boolean(busy) || shouldResumePoll(status)}
+            >
               실행
             </button>
           </section>
@@ -270,9 +325,10 @@ export default function RunPage() {
                   <span style={{ width: `${pct}%` }} />
                 </div>
                 <p className="hint">
-                  {status} · {mode === "api" ? "실제 모델" : "재연"}
+                  {status || "queued"} · {mode === "api" ? "실제 모델" : "재연"}
                   {openCase ? ` · ${openCase} 진행 중` : ""} · 턴 {progress.at(-1)?.turn || 0} / 약 {maxTurn}
                 </p>
+                <p className="hint">새로고침하거나 창을 닫아도 실행은 서버에서 이어집니다.</p>
                 <button
                   type="button"
                   className="secondary"

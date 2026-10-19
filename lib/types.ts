@@ -27,6 +27,7 @@ export type RunMeta = {
   callLimit: number;
   status: RunStatus;
   sandboxId: string;
+  commandId?: string;
   error?: string;
   summary?: unknown;
   /** 공식 대화록을 이미 저장한 증례. 진행 중 기록으로 다시 덮지 않는다. */

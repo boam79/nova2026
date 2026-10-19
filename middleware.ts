@@ -1,12 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { GATE_COOKIE } from "./lib/constants";
 import { verifyGateToken } from "./lib/auth";
+import { isContinuePath } from "./lib/durable-run";
 
 const PUBLIC = new Set(["/login", "/api/login", "/robots.txt"]);
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (PUBLIC.has(pathname) || pathname.startsWith("/_next")) {
+  if (PUBLIC.has(pathname) || pathname.startsWith("/_next") || isContinuePath(pathname)) {
     return NextResponse.next();
   }
   const secret = process.env.AUTH_SECRET || "";
