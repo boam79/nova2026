@@ -748,12 +748,26 @@ def run_one_version(src, cases, reps, keys, settings, log):
     env['PYTHONIOENCODING'] = 'utf-8'
     env['NOVA_LOCAL_CHILD_DOCTOR_KEY'] = keys['doctor']
     env['NOVA_LOCAL_CHILD_PATIENT_KEY'] = keys['patient']
+    def mark_case(kind, label, ok=None):
+        path = os.environ.get('NOVA_LOCAL_PROGRESS')
+        if not path:
+            return
+        event = {'kind': kind, 'turn': 0, 'calls': 0, 'doctor': '', 'patient': '', 'case': label}
+        if ok is not None:
+            event['ok'] = bool(ok)
+        try:
+            with open(path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(event, ensure_ascii=False) + '\n')
+        except OSError:
+            pass
+
     repmap = reps_for_cases(reps, cases)
     labels = []
     for cid in cases:
         n = repmap[cid]
         for r in range(1, n + 1):
             label = cid if n == 1 else f'{cid}_r{r}'
+            mark_case('case_start', label)
             cfg = dict(settings, case=cid, rep=r, agent_dir=str(agent), transcript=str(out / f'{label}.json'),
                        candidate=name, run_id=f'{stamp}_{label}',
                        progress=str(work / 'progress.jsonl'), call_limit=settings.get('call_limit', CALL_LIMIT))
@@ -765,6 +779,7 @@ def run_one_version(src, cases, reps, keys, settings, log):
                 say(line)
             got = (out / f'{label}.json').exists()
             say(f'== {label} 끝: 종료 코드 {proc.returncode}, 대화록 {"있음" if got else "없음"}')
+            mark_case('case_end', label, got and proc.returncode == 0)
             labels.append(label)
     rows = [summarize(lb, out / f'{lb}.json') for lb in labels]
     md = summary_md(Path(src).name, sha, rows, mode)

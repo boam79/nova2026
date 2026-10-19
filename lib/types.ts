@@ -9,6 +9,8 @@ export type ProgressEvent = {
   calls: number;
   doctor: string;
   patient: string;
+  case?: string;
+  ok?: boolean;
 };
 
 export type RunMeta = {

@@ -78,6 +78,11 @@ export default function RunPage() {
   );
   const maxTurn = Math.max(1, runCount * 50);
   const pct = Math.min(100, Math.round(((progress.at(-1)?.turn || 0) / maxTurn) * 100));
+  let openCase = "";
+  for (const event of progress) {
+    if (event.kind === "case_start") openCase = event.case || "";
+    if (event.kind === "case_end") openCase = "";
+  }
 
   async function onFile(file: File) {
     setError("");
@@ -188,57 +193,14 @@ export default function RunPage() {
           <Nav />
           <h1>실행</h1>
         </div>
-        <BlobUsagePanel />
       </header>
       <Disclaimer />
+      <BlobUsagePanel />
       {busy ? <p className="hint">{busy}</p> : null}
       {error ? <p className="bad">{error}</p> : null}
 
       <div className="work">
         <div>
-          <section className="card">
-            <h2>제출 ZIP</h2>
-            <p className="hint">공개 샘플·합성 증례만. 비공개 증례·채점 정보·비공개 대화록을 올리지 마세요.</p>
-            <div
-              className={`drop ${over ? "over" : ""}`}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setOver(true);
-              }}
-              onDragLeave={() => setOver(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setOver(false);
-                const f = e.dataTransfer.files[0];
-                if (f) onFile(f);
-              }}
-            >
-              <p>끌어놓거나 파일을 고르세요</p>
-              <input
-                type="file"
-                accept=".zip,application/zip"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) onFile(f);
-                }}
-              />
-            </div>
-            {zip ? (
-              <p>
-                {zip.name} {zip.ok ? <span className="ok">검증 통과</span> : <span className="bad">검증 실패</span>}
-              </p>
-            ) : null}
-            {zip?.issues.length ? (
-              <ul>
-                {zip.issues.map((i, n) => (
-                  <li key={n} className={i.level === "ERROR" ? "bad" : ""}>
-                    {i.message}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </section>
-
           <section className="card">
             <h2>실행 설정</h2>
             <div className="case-head">
@@ -294,7 +256,97 @@ export default function RunPage() {
           </section>
         </div>
 
-        <div className="sticky-col">
+        <div className="progress-col">
+          <section className="card">
+            <h2>진행</h2>
+            {runId ? (
+              <>
+                <div className="progress">
+                  <span style={{ width: `${pct}%` }} />
+                </div>
+                <p className="hint">
+                  {status} · {mode === "api" ? "실제 모델" : "재연"}
+                  {openCase ? ` · ${openCase} 진행 중` : ""} · 턴 {progress.at(-1)?.turn || 0} / 약 {maxTurn}
+                </p>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={async () => {
+                    await fetch(`/api/runs/${runId}/stop`, { method: "POST" });
+                  }}
+                  disabled={status !== "running"}
+                >
+                  중지
+                </button>
+                <div className="turns">
+                  {progress.map((p, i) =>
+                    p.kind === "case_start" ? (
+                      <p key={i} className="case-mark">
+                        {p.case} 시작
+                      </p>
+                    ) : p.kind === "case_end" ? (
+                      <p key={i} className={p.ok === false ? "case-mark bad" : "case-mark end"}>
+                        {p.case} 끝{p.ok === false ? " · 대화록 없음" : ""}
+                      </p>
+                    ) : (
+                      <p key={i}>
+                        [{p.kind} {p.turn}] 의사: {p.doctor}
+                        <br />
+                        환자: {p.patient}
+                      </p>
+                    ),
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="hint">실행하면 증례 시작·끝과 대화가 여기에 쌓입니다.</p>
+            )}
+          </section>
+        </div>
+
+        <div className="side-col">
+          <section className="card">
+            <h2>제출 ZIP</h2>
+            <p className="hint">공개 샘플·합성 증례만. 비공개 증례·채점 정보·비공개 대화록을 올리지 마세요.</p>
+            <div
+              className={`drop ${over ? "over" : ""}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setOver(true);
+              }}
+              onDragLeave={() => setOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setOver(false);
+                const f = e.dataTransfer.files[0];
+                if (f) onFile(f);
+              }}
+            >
+              <p>끌어놓거나 파일을 고르세요</p>
+              <input
+                type="file"
+                accept=".zip,application/zip"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) onFile(f);
+                }}
+              />
+            </div>
+            {zip ? (
+              <p>
+                {zip.name} {zip.ok ? <span className="ok">검증 통과</span> : <span className="bad">검증 실패</span>}
+              </p>
+            ) : null}
+            {zip?.issues.length ? (
+              <ul>
+                {zip.issues.map((i, n) => (
+                  <li key={n} className={i.level === "ERROR" ? "bad" : ""}>
+                    {i.message}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
           <section className="card">
             <h2>OpenAI 키</h2>
             <p className="hint">본인 키만. 대회 개발 키는 넣지 마세요. 서버에 저장하지 않습니다.</p>
@@ -349,41 +401,6 @@ export default function RunPage() {
               연결 점검
             </button>
             {preflight ? <p className={preflight.includes("실패") || preflight.includes("HTTP") ? "bad" : "ok"}>{preflight}</p> : null}
-          </section>
-
-          <section className="card">
-            <h2>진행</h2>
-            {runId ? (
-              <>
-                <div className="progress">
-                  <span style={{ width: `${pct}%` }} />
-                </div>
-                <p className="hint">
-                  {status} · {mode === "api" ? "실제 모델" : "재연"} · 턴 {progress.at(-1)?.turn || 0} / 약 {maxTurn}
-                </p>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={async () => {
-                    await fetch(`/api/runs/${runId}/stop`, { method: "POST" });
-                  }}
-                  disabled={status !== "running"}
-                >
-                  중지
-                </button>
-                <div className="turns">
-                  {progress.map((p, i) => (
-                    <p key={i}>
-                      [{p.kind} {p.turn}] 의사: {p.doctor}
-                      <br />
-                      환자: {p.patient}
-                    </p>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <p className="hint">실행하면 대화가 여기에 쌓입니다.</p>
-            )}
           </section>
         </div>
       </div>

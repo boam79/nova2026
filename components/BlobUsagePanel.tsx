@@ -52,14 +52,18 @@ export function BlobUsagePanel() {
   const label = storeLabel(store ?? null);
 
   return (
-    <p className="blob-mini" aria-label="Blob 횟수" title={data?.note || "이 앱이 센 Blob 횟수"}>
-      <span>Blob {label}</span>
-      <span>Adv {fmt(inst?.advanced)}</span>
-      <span>Sim {fmt(inst?.simple)}</span>
+    <section className="blob-bar" aria-label="Blob 횟수">
+      <strong>Blob 조회</strong>
+      <span>스토어 {label}</span>
+      <span>
+        Advanced {fmt(inst?.advanced)}회
+        <span className="hint">list {fmt(inst?.list)} · 업로드 {fmt(inst?.put)}</span>
+      </span>
+      <span>Simple {fmt(inst?.simple)}회</span>
       <button type="button" className="secondary" onClick={load} disabled={busy}>
-        {busy ? "…" : "갱신"}
+        {busy ? "읽는 중…" : "새로고침"}
       </button>
-      {error ? <span>{error}</span> : null}
-    </p>
+      {error ? <span className="bad">{error}</span> : null}
+    </section>
   );
 }
