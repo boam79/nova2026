@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Disclaimer, Nav } from "../../../components/Nav";
+import { ShareBox } from "../../../components/ShareBox";
 
 type Row = {
   case: string;
@@ -50,6 +51,7 @@ export default function ResultPage() {
       <Nav />
       <h1>결과 {data?.meta?.candidate || ""}</h1>
       <Disclaimer />
+      <ShareBox id={id} />
       <p className="hint">
         요청 모드: {data?.meta?.mode === "api" ? "실제 모델" : data?.meta?.mode === "replay" ? "재연" : "—"}
         {data?.meta?.status === "queued" || data?.meta?.status === "running"

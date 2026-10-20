@@ -45,6 +45,7 @@ input[type="text"], input[type="password"], input[type="number"], select, textar
   width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff;
 }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.row input { flex: 1; min-width: 0; }
 .hint { color: var(--muted); font-size: 0.85rem; }
 button, .btn {
   appearance: none; border: 0; background: var(--accent); color: #fff; padding: 8px 14px; border-radius: 8px;
@@ -71,5 +72,15 @@ th, td { border-bottom: 1px solid var(--line); padding: 8px 6px; text-align: lef
 .check input { width: auto; }
 .progress { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
 .progress > span { display: block; height: 100%; background: var(--accent); }
+.share-doc {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  font: inherit;
+  color: inherit;
+}
 .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .metrics p { margin: 8px 0; }
