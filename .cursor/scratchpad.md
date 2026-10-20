@@ -41,6 +41,7 @@
 
 ## Executor's Feedback or Assistance Requests
 
+- 2026-10-20: 함수 60초는 라우트의 `maxDuration = 60`이 Fluid 기본(300초)을 낮춘 것. 조회·중지를 300초로 맞춤. Hobby 상한 300, Pro는 800까지. 긴 진료는 샌드박스 120분+continue 펌프.
 - 2026-10-20: 웹실행기가 멈춘 것처럼 보임. 사이트는 살아 있음. GET `/api/runs/[id]`가 샌드박스 poll+전체 Blob list를 기다리다 60초 타임아웃/Blob 500 → 화면 폴링이 죽음. 수정: 조회는 Blob만 읽고 펌프는 after()로 유지, Blob 5xx 재시도, 시작/폴링은 실패해도 버튼을 풀어 두고 다시 붙음.
 - 2026-10-19: 로그인하면 끝난 결과(예: submission-v10 `/runs/[id]`)로 강제 이동하던 버그. 원인: `localStorage`의 실행 id를 상태 확인 없이 복원 → `status===""`이라 폴링이 살아 있는 줄 알고 `done`이면 `/runs/[id]`로 보냄. 수정: queued/running만 다시 붙이고, done/error/stopped/404는 저장을 지운 뒤 실행 화면에 남김. 기록 목록에서 예전 결과는 그대로 볼 수 있음. 사람 확인: 배포 HTTPS에서 로그인 후 결과로 안 가는지.
 - 2026-10-19: OpenAI 잔액 HTTP 403은 버그가 아니다. 진료용 프로젝트 API 키는 모델 실행만 되고, `credit_grants`·`organization/costs`는 Admin 키가 필요하다. 남은 크레딧 API는 공식 제공이 없다. 화면은 빨간 403 대신 ‘실행은 됩니다’ 안내로 바꾼다. 키는 서버에 저장하지 않는다.

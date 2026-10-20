@@ -4,7 +4,8 @@ import { maskText } from "../../../../lib/mask";
 import { getPrivateBuffer } from "../../../../lib/blob";
 import { needsPumpKick } from "../../../../lib/run-pump";
 
-export const maxDuration = 60;
+/** 함수 한도. Hobby 최대 300초. 진료 전체(샌드박스 120분)와는 별개다. */
+export const maxDuration = 300;
 export const runtime = "nodejs";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
