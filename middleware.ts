@@ -2,11 +2,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { GATE_COOKIE } from "./lib/constants";
 import { verifyGateToken } from "./lib/auth";
 import { PUMP_HEADER, isContinuePath, verifyPumpSecret } from "./lib/run-pump";
-import { isPublicPath } from "./lib/share";
+
+const PUBLIC = new Set(["/login", "/api/login", "/robots.txt"]);
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (isPublicPath(pathname) || pathname.startsWith("/_next")) {
+  if (PUBLIC.has(pathname) || pathname.startsWith("/_next")) {
     return NextResponse.next();
   }
   const secret = process.env.AUTH_SECRET || "";

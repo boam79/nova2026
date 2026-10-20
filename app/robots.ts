@@ -1,11 +1,5 @@
 import type { MetadataRoute } from "next";
 
 export default function robots(): MetadataRoute.Robots {
-  return {
-    rules: {
-      userAgent: "*",
-      allow: ["/share/"],
-      disallow: ["/"],
-    },
-  };
+  return { rules: { userAgent: "*", disallow: "/" } };
 }
