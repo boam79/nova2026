@@ -170,31 +170,36 @@ export default function RunPage() {
     if (!zip?.ok) return;
     setError("");
     setBusy("실행 시작…");
-    const res = await fetch("/api/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        zipPath: zip.pathname,
-        candidate: zip.name.replace(/\.zip$/i, ""),
-        cases,
-        repsByCase,
-        mode: apiKey.trim() ? "api" : "replay",
-        apiKey,
-        doctorModel,
-        patientModel,
-        callLimit,
-      }),
-    });
-    const data = await res.json();
-    setBusy("");
-    if (!res.ok) {
-      setError(data.error || "실행 실패");
-      return;
+    try {
+      const res = await fetch("/api/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          zipPath: zip.pathname,
+          candidate: zip.name.replace(/\.zip$/i, ""),
+          cases,
+          repsByCase,
+          mode: apiKey.trim() ? "api" : "replay",
+          apiKey,
+          doctorModel,
+          patientModel,
+          callLimit,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || "실행 실패");
+        return;
+      }
+      setRunId(data.id);
+      setStatus(data.meta?.status || "queued");
+      setProgress([]);
+      persistRun(data.id);
+    } catch {
+      setError("실행을 시작하지 못했습니다. 다시 눌러 주세요.");
+    } finally {
+      setBusy("");
     }
-    setRunId(data.id);
-    setStatus(data.meta?.status || "queued");
-    setProgress([]);
-    persistRun(data.id);
   }
 
   const live = shouldKeepPumping(status) || (Boolean(runId) && status === "");
@@ -203,22 +208,33 @@ export default function RunPage() {
     if (!runId || !live) return;
     let stop = false;
     async function tick() {
-      const res = await fetch(`/api/runs/${runId}`);
-      const data = await res.json();
-      if (stop) return;
-      setProgress(data.progress || []);
-      setStatus(data.meta?.status || "");
-      if (data.meta?.status === "done") {
-        persistRun("");
-        window.location.href = `/runs/${runId}`;
-        return;
+      try {
+        const res = await fetch(`/api/runs/${runId}`);
+        const data = await res.json().catch(() => ({}));
+        if (stop) return;
+        if (!res.ok) {
+          setError(data.error || "진행을 잠시 못 읽었습니다. 다시 붙는 중…");
+          setTimeout(tick, 2000);
+          return;
+        }
+        setError("");
+        setProgress(data.progress || []);
+        setStatus(data.meta?.status || "");
+        if (data.meta?.status === "done") {
+          persistRun("");
+          window.location.href = `/runs/${runId}`;
+          return;
+        }
+        if (data.meta?.status === "error" || data.meta?.status === "stopped") {
+          persistRun("");
+          setError(data.meta.error || data.error || data.meta.status);
+          return;
+        }
+        setTimeout(tick, 1200);
+      } catch {
+        if (stop) return;
+        setTimeout(tick, 2000);
       }
-      if (data.meta?.status === "error" || data.meta?.status === "stopped") {
-        persistRun("");
-        setError(data.meta.error || data.error || data.meta.status);
-        return;
-      }
-      setTimeout(tick, 1200);
     }
     tick();
     return () => {

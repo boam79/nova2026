@@ -10,6 +10,7 @@ import { isSandboxStoppedError, isSandboxStoppedPayload, transcriptsFromProgress
 import { runnerLaunchArgs } from "./run-mode";
 import { BusyError, parseLock, admitRun, releaseRun, liveRuns, type LockState } from "./run-lock";
 import { PUMP_BUDGET_MS, PUMP_HEADER, PUMP_TICK_MS, shouldKeepPumping } from "./run-pump";
+import { guessMetaPaths } from "./run-paths";
 import type { ProgressEvent, RunMeta, RunMode } from "./types";
 
 const RUNNER = join(process.cwd(), "vendor", "nova_local_runner.py");
@@ -34,6 +35,10 @@ export async function saveMeta(meta: RunMeta, secrets: string[] = []): Promise<v
 }
 
 export async function loadMeta(id: string): Promise<RunMeta | null> {
+  for (const pathname of guessMetaPaths(id)) {
+    const buf = await getPrivateBuffer(pathname);
+    if (buf) return JSON.parse(buf.toString("utf8")) as RunMeta;
+  }
   const blobs = await (await import("./blob")).listPrefix("runs/");
   const hit = blobs.find((b) => b.pathname.endsWith(`/${id}/meta.json`));
   if (!hit) return null;

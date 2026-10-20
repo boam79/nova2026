@@ -29,12 +29,16 @@ export default function ResultPage() {
   useEffect(() => {
     let cancelled = false;
     async function tick() {
-      const res = await fetch(`/api/runs/${id}`);
-      const json = await res.json();
-      if (cancelled) return;
-      setData(json);
-      const st = json.meta?.status;
-      if (st === "queued" || st === "running") setTimeout(tick, 1200);
+      try {
+        const res = await fetch(`/api/runs/${id}`);
+        const json = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (res.ok) setData(json);
+        const st = json.meta?.status;
+        if (st === "queued" || st === "running" || !res.ok) setTimeout(tick, res.ok ? 1200 : 2000);
+      } catch {
+        if (!cancelled) setTimeout(tick, 2000);
+      }
     }
     tick();
     return () => {

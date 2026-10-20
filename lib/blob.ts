@@ -7,6 +7,7 @@ import {
   takeBlobOpsDelta,
   type BlobOpSnapshot,
 } from "./blob-ops.ts";
+import { retryBlob } from "./blob-retry.ts";
 
 const privateAccess = { access: "private" as const };
 
@@ -86,19 +87,21 @@ export async function putPrivate(pathname: string, body: Buffer | string | Blob,
 
 export async function getPrivateBuffer(pathname: string): Promise<Buffer | null> {
   recordBlobOp("get");
-  return rawGetBuffer(pathname);
+  return retryBlob(() => rawGetBuffer(pathname));
 }
 
 export async function listPrefix(prefix: string) {
-  const out = [];
-  let cursor: string | undefined;
-  do {
-    recordBlobOp("list");
-    const page = await list({ prefix, cursor, limit: 1000 });
-    out.push(...page.blobs);
-    cursor = page.hasMore ? page.cursor : undefined;
-  } while (cursor);
-  return out;
+  return retryBlob(async () => {
+    const out = [];
+    let cursor: string | undefined;
+    do {
+      recordBlobOp("list");
+      const page = await list({ prefix, cursor, limit: 1000 });
+      out.push(...page.blobs);
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+    return out;
+  });
 }
 
 export async function deletePrefix(prefix: string) {
